@@ -1,0 +1,78 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "dualmac",
+  "title": "DualMac",
+  "description": "Zero-permission Virtual DualSense bridge, MacBook Trackpad + Keyboard GTA 6 Smart Pack, and WAN stream optimizer for PS5 Remote Play on macOS",
+  "icon": "icon.png",
+  "author": "yyamandevrim",
+  "categories": [
+    "Applications",
+    "System"
+  ],
+  "license": "MIT",
+  "preferences": [
+    {
+      "name": "projectDir",
+      "type": "directory",
+      "required": false,
+      "title": "DualMac Directory (Optional)",
+      "description": "Leave empty if installed via `make install` (~/.local/bin/dualmac), or pick your cloned dualmac folder",
+      "default": ""
+    },
+    {
+      "name": "homeHost",
+      "type": "textfield",
+      "required": false,
+      "title": "Home PS5 / WAN Probe Host",
+      "description": "Optional home IP or DDNS hostname for latency/jitter probing (default: 1.1.1.1)",
+      "default": "1.1.1.1"
+    },
+    {
+      "name": "privilegedByDefault",
+      "type": "checkbox",
+      "required": false,
+      "title": "Pause Wi-Fi AWDL by Default",
+      "label": "Use Touch ID / Admin prompt to pause awdl0/llw0 and boost kernel UDP buffers (fixes 30-100ms Wi-Fi lag spikes)",
+      "default": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "play-gta6",
+      "title": "Play GTA 6 (DualMac)",
+      "description": "Choose Sony Remote Play or chiaki-ng preset, view MacBook Trackpad controls, and launch",
+      "mode": "view"
+    },
+    {
+      "name": "quick-play",
+      "title": "Quick Play GTA 6",
+      "description": "Instantly launch Official PS Remote Play with Virtual DualSense & GTA 6 Smart Pack",
+      "mode": "no-view"
+    },
+    {
+      "name": "network-doctor",
+      "title": "DualMac Network Doctor",
+      "description": "Inspect WAN ping, jitter, packet loss, PSN firewall reachability, and macOS AWDL Wi-Fi spikes",
+      "mode": "view"
+    },
+    {
+      "name": "restore-system",
+      "title": "DualMac Restore System",
+      "description": "Restore awdl0/llw0, DNS/VPN, kernel UDP buffers, and chiaki-ng preferences after a session",
+      "mode": "no-view"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.85.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "build": "ray build -e dist",
+    "dev": "ray develop",
+    "lint": "ray lint"
+  }
+}

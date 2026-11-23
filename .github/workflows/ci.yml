@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  macos-build-and-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build native DualSense bridges & DualMac.app
+        run: make build app
+
+      - name: Run C & Python unit tests
+        run: make test
+
+      - name: Verify CLI dry-run
+        run: |
+          chmod +x bin/dualmac
+          ./bin/dualmac --version
+          ./bin/dualmac start --dry-run
+
+      - name: Setup Node.js for Raycast extension
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: raycast-extension/package-lock.json
+
+      - name: Build Raycast extension
+        working-directory: raycast-extension
+        run: |
+          npm ci
+          npm run build
