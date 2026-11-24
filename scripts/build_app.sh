@@ -71,6 +71,7 @@ swiftc \
   -target "${ARCH}-apple-macosx13.0" \
   -framework AppKit \
   -framework SwiftUI \
+  -framework GameController \
   "$SWIFT_SRC" \
   -o "$APP_DIR/Contents/MacOS/Senza"
 

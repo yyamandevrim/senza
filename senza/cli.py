@@ -18,6 +18,7 @@ from .app_bridge import (
     find_sony_app,
     launch_client,
     prepare_patched_app,
+    resolve_launched_pid,
 )
 from .firewall_bypass import FirewallBypass, probe_psn_firewall, restore_firewall_bypass
 from .net_probe import probe_network
@@ -230,9 +231,10 @@ def cmd_start(args: argparse.Namespace) -> int:
             profile_json_path=profile_json_path,
             ping_host=args.host,
         )
+        real_pid = resolve_launched_pid(proc, client=client, used_open=(not use_kbm))
         label = "Sony RemotePlay" if client == "sony" else "chiaki-ng"
-        print(f"  [launch] {label} started (pid={proc.pid})", flush=True)
-        for note in optimizer.boost_process(proc.pid, label=label):
+        print(f"  [launch] {label} started (pid={real_pid})", flush=True)
+        for note in optimizer.boost_process(real_pid, label=label):
             print(f"  [opt] {note}", flush=True)
         return proc.wait()
     finally:

@@ -258,6 +258,30 @@ def _activate_running_app_async(proc: subprocess.Popen[bytes], app_bundle: Path)
     threading.Thread(target=_worker, name="senza-frontmost", daemon=True).start()
 
 
+def resolve_launched_pid(
+    proc: subprocess.Popen[bytes],
+    client: str = "sony",
+    used_open: bool = False,
+    timeout: float = 6.0,
+) -> int:
+    """Resolve the actual GUI app PID (handles `/usr/bin/open -W` launcher wrappers)."""
+    if not used_open:
+        return proc.pid
+    names = ("RemotePlay",) if client == "sony" else ("chiaki-ng", "chiaki", "Chiaki")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        for name in names:
+            res = subprocess.run(["pgrep", "-n", "-x", name], capture_output=True, text=True, check=False)
+            if res.returncode == 0:
+                raw = res.stdout.strip().splitlines()
+                if raw and raw[-1].isdigit():
+                    return int(raw[-1])
+        time.sleep(0.12)
+    return proc.pid
+
+
 def launch_client(
     app_bundle: Path,
     dylib_path: Path | None,
@@ -267,22 +291,26 @@ def launch_client(
     profile_json_path: Path | None = None,
     ping_host: str | None = None,
 ) -> subprocess.Popen[bytes]:
-    binary = find_app_binary(app_bundle, client=client)
-    if inject_kbm and dylib_path is not None and runtime_cfg_path is not None:
-        env = build_launch_env(
-            dylib_path,
-            runtime_cfg_path,
-            profile_json_path=profile_json_path,
-            ping_host=ping_host,
-        )
-    else:
-        env = os.environ.copy()
     if client == "sony":
         subprocess.run(
             ["defaults", "write", "com.playstation.RemotePlay", "NSAppSleepDisabled", "-bool", "YES"],
             capture_output=True,
             check=False,
         )
-    proc = subprocess.Popen([str(binary)], env=env)
-    _activate_running_app_async(proc, app_bundle)
-    return proc
+
+    if inject_kbm and dylib_path is not None and runtime_cfg_path is not None:
+        binary = find_app_binary(app_bundle, client=client)
+        env = build_launch_env(
+            dylib_path,
+            runtime_cfg_path,
+            profile_json_path=profile_json_path,
+            ping_host=ping_host,
+        )
+        proc = subprocess.Popen([str(binary)], env=env)
+        _activate_running_app_async(proc, app_bundle)
+        return proc
+
+    # Physical controller mode: launch via LaunchServices (`open -W`) so Apple App Sandbox
+    # & Bluetooth/USB DualSense entitlements run in their native macOS security context
+    # and the window activates reliably in the foreground.
+    return subprocess.Popen(["/usr/bin/open", "-W", str(app_bundle)], env=os.environ.copy())

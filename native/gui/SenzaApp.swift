@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GameController
 import SwiftUI
 
 // MARK: - Models
@@ -142,13 +143,26 @@ struct SenzaCLI {
 final class SenzaController: ObservableObject {
     static let shared = SenzaController()
 
-    @AppStorage("senza.inputMode") var inputModeRaw: String = InputMode.kbm.rawValue
-    @AppStorage("senza.client") var clientRaw: String = ClientKind.sony.rawValue
-    @AppStorage("senza.preset") var presetRaw: String = StreamPresetOption.auto.rawValue
-    @AppStorage("senza.privileged") var privileged: Bool = true
-    @AppStorage("senza.firewall") var firewallRaw: String = FirewallMode.off.rawValue
-    @AppStorage("senza.host") var probeHost: String = "1.1.1.1"
+    @Published var inputMode: InputMode {
+        didSet { UserDefaults.standard.set(inputMode.rawValue, forKey: "senza.inputMode") }
+    }
+    @Published var client: ClientKind {
+        didSet { UserDefaults.standard.set(client.rawValue, forKey: "senza.client") }
+    }
+    @Published var preset: StreamPresetOption {
+        didSet { UserDefaults.standard.set(preset.rawValue, forKey: "senza.preset") }
+    }
+    @Published var privileged: Bool {
+        didSet { UserDefaults.standard.set(privileged, forKey: "senza.privileged") }
+    }
+    @Published var firewall: FirewallMode {
+        didSet { UserDefaults.standard.set(firewall.rawValue, forKey: "senza.firewall") }
+    }
+    @Published var probeHost: String {
+        didSet { UserDefaults.standard.set(probeHost, forKey: "senza.host") }
+    }
 
+    @Published var connectedControllerName: String? = nil
     @Published var phase: SessionPhase = .idle
     @Published var statusNote: String = "Ready to connect"
     @Published var doctor: DoctorResponse? = nil
@@ -160,28 +174,62 @@ final class SenzaController: ObservableObject {
     private var childPid: Int32 = 0
     private var childBundleURL: URL? = nil
     private var handoffDone: Bool = false
+    private var userManuallyPickedMode: Bool = false
 
     weak var mainWindow: NSWindow?
     var onPhaseChanged: ((SessionPhase) -> Void)?
 
-    var inputMode: InputMode {
-        get { InputMode(rawValue: inputModeRaw) ?? .kbm }
-        set { inputModeRaw = newValue.rawValue; objectWillChange.send() }
+    private init() {
+        let ud = UserDefaults.standard
+        self.inputMode = InputMode(rawValue: ud.string(forKey: "senza.inputMode") ?? "") ?? .kbm
+        self.client = ClientKind(rawValue: ud.string(forKey: "senza.client") ?? "") ?? .sony
+        self.preset = StreamPresetOption(rawValue: ud.string(forKey: "senza.preset") ?? "") ?? .auto
+        self.privileged = ud.object(forKey: "senza.privileged") == nil ? true : ud.bool(forKey: "senza.privileged")
+        self.firewall = FirewallMode(rawValue: ud.string(forKey: "senza.firewall") ?? "") ?? .off
+        self.probeHost = ud.string(forKey: "senza.host") ?? "1.1.1.1"
+        setupControllerObservers()
     }
 
-    var client: ClientKind {
-        get { ClientKind(rawValue: clientRaw) ?? .sony }
-        set { clientRaw = newValue.rawValue; objectWillChange.send() }
+    func selectInputMode(_ mode: InputMode) {
+        userManuallyPickedMode = true
+        inputMode = mode
     }
 
-    var preset: StreamPresetOption {
-        get { StreamPresetOption(rawValue: presetRaw) ?? .auto }
-        set { presetRaw = newValue.rawValue; objectWillChange.send() }
+    private func setupControllerObservers() {
+        GCController.shouldMonitorBackgroundEvents = true
+        refreshConnectedControllers(autoSelect: true)
+
+        NotificationCenter.default.addObserver(
+            forName: .GCControllerDidConnect,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshConnectedControllers(autoSelect: true)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .GCControllerDidDisconnect,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshConnectedControllers(autoSelect: false)
+            }
+        }
     }
 
-    var firewall: FirewallMode {
-        get { FirewallMode(rawValue: firewallRaw) ?? .off }
-        set { firewallRaw = newValue.rawValue; objectWillChange.send() }
+    func refreshConnectedControllers(autoSelect: Bool) {
+        let controllers = GCController.controllers()
+        if let pad = controllers.first {
+            let name = pad.vendorName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            connectedControllerName = (name?.isEmpty == false) ? name : "DualSense"
+            if autoSelect && !userManuallyPickedMode && !isBusy {
+                inputMode = .controller
+            }
+        } else {
+            connectedControllerName = nil
+        }
     }
 
     var isBusy: Bool {
@@ -648,10 +696,21 @@ struct SenzaRootView: View {
 
     private var inputModeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("INPUT MODE")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.45))
-                .tracking(0.8)
+            HStack {
+                Text("INPUT MODE")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .tracking(0.8)
+                Spacer()
+                if ctrl.connectedControllerName != nil {
+                    HStack(spacing: 4) {
+                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                        Text("DualSense Connected")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.green.opacity(0.92))
+                    }
+                }
+            }
 
             HStack(spacing: 10) {
                 ModeCard(
@@ -659,19 +718,21 @@ struct SenzaRootView: View {
                     subtitle: "GTA 6 Smart Pack",
                     icon: "rectangle.and.hand.point.up.left.filled",
                     selected: ctrl.inputMode == .kbm,
+                    badge: nil,
                     accent: sapphire
                 ) {
-                    ctrl.inputMode = .kbm
+                    ctrl.selectInputMode(.kbm)
                 }
 
                 ModeCard(
                     title: "DualSense",
-                    subtitle: "Physical Controller",
+                    subtitle: ctrl.connectedControllerName != nil ? "Connected · Full Haptics" : "Physical Controller",
                     icon: "gamecontroller.fill",
                     selected: ctrl.inputMode == .controller,
+                    badge: ctrl.connectedControllerName != nil ? "LIVE" : nil,
                     accent: sapphire
                 ) {
-                    ctrl.inputMode = .controller
+                    ctrl.selectInputMode(.controller)
                 }
             }
         }
@@ -684,7 +745,7 @@ struct SenzaRootView: View {
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.82))
                 Spacer()
-                Picker("", selection: Binding(get: { ctrl.client }, set: { ctrl.client = $0 })) {
+                Picker("", selection: $ctrl.client) {
                     ForEach(ClientKind.allCases) { item in
                         Text(item.displayName).tag(item)
                     }
@@ -700,7 +761,7 @@ struct SenzaRootView: View {
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(.white.opacity(0.82))
                     Spacer()
-                    Picker("", selection: Binding(get: { ctrl.preset }, set: { ctrl.preset = $0 })) {
+                    Picker("", selection: $ctrl.preset) {
                         ForEach(StreamPresetOption.allCases) { p in
                             Text(p.label).tag(p)
                         }
@@ -740,7 +801,7 @@ struct SenzaRootView: View {
                         .foregroundStyle(.white.opacity(0.48))
                 }
                 Spacer()
-                Picker("", selection: Binding(get: { ctrl.firewall }, set: { ctrl.firewall = $0 })) {
+                Picker("", selection: $ctrl.firewall) {
                     ForEach(FirewallMode.allCases) { mode in
                         Text(mode.label).tag(mode)
                     }
@@ -773,11 +834,12 @@ struct SenzaRootView: View {
     private var actionSection: some View {
         switch ctrl.phase {
         case .idle:
+            let modeTag = ctrl.inputMode == .controller ? "DualSense" : "Trackpad"
             Button(action: { ctrl.launchSession() }) {
                 HStack(spacing: 8) {
                     Image(systemName: "play.fill")
                         .font(.system(size: 13, weight: .semibold))
-                    Text("Launch \(ctrl.client.displayName)")
+                    Text("Launch \(ctrl.client.displayName) · \(modeTag)")
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundStyle(.white)
@@ -902,16 +964,25 @@ struct ModeCard: View {
     let subtitle: String
     let icon: String
     let selected: Bool
+    let badge: String?
     let accent: Color
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
+                HStack(spacing: 6) {
                     Image(systemName: icon)
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(selected ? accent : .white.opacity(0.65))
+                    if let badge {
+                        Text(badge)
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Color.green.opacity(0.16), in: Capsule())
+                    }
                     Spacer()
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
@@ -936,6 +1007,7 @@ struct ModeCard: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(selected ? accent.opacity(0.75) : Color.white.opacity(0.08), lineWidth: selected ? 1.2 : 0.75)
             )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
     }
