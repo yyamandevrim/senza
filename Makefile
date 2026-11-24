@@ -13,7 +13,7 @@ OBJCFLAGS := -O2 -Wall -Wextra -fobjc-arc -I$(NATIVE_DIR)
 FRAMEWORKS := -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices -framework Cocoa -framework QuartzCore
 SONY_FRAMEWORKS := $(FRAMEWORKS) -framework IOKit
 
-.PHONY: all build app install uninstall test test-c test-py clean
+.PHONY: all build app install install-app uninstall test test-c test-py clean
 
 all: build
 
@@ -64,7 +64,12 @@ install: build app
 	ln -sf "$(CURDIR)/bin/dualmac" "$(BIN_DIR)/dualmac"
 	@echo "Installed CLI: $(BIN_DIR)/dualmac -> $(CURDIR)/bin/dualmac"
 	@echo "App launcher : $(CURDIR)/$(APP_BUNDLE)"
-	@echo "Next step    : dualmac setup"
+	@echo 'Next step    : dualmac setup  (or "make install-app" to copy DualMac.app to /Applications)'
+
+install-app: app
+	rm -rf "/Applications/DualMac.app"
+	cp -R "$(APP_BUNDLE)" "/Applications/DualMac.app"
+	@echo "Installed GUI app: /Applications/DualMac.app"
 
 uninstall:
 	rm -f "$(BIN_DIR)/dualmac"

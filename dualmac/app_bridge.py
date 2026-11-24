@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import os
+import plistlib
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUILD_CHIAKI_DYLIB = REPO_ROOT / "build" / "libdualmac_chiaki.dylib"
 BUILD_SONY_DYLIB = REPO_ROOT / "build" / "libdualmac_sony.dylib"
+ICON_PNG_PATH = REPO_ROOT / "assets" / "icon.png"
 STATE_DIR = Path.home() / ".local" / "share" / "dualmac"
 
 PATCHED_APP = STATE_DIR / "chiaki-ng-patched.app"
@@ -17,6 +23,7 @@ CHIAKI_STAMP_FILE = STATE_DIR / "chiaki-ng-source.stamp"
 
 PATCHED_SONY_APP = STATE_DIR / "RemotePlay-patched.app"
 SONY_STAMP_FILE = STATE_DIR / "remoteplay-source.stamp"
+CACHED_ICNS_PATH = STATE_DIR / "DualMac.icns"
 
 CHIAKI_SEARCH_PATHS = (
     Path("/Applications/chiaki-ng.app"),
@@ -70,10 +77,72 @@ def ensure_dylib_built(client: str = "chiaki", force: bool = False) -> Path:
     return target
 
 
+def _ensure_dualmac_icns() -> Path | None:
+    """Build and cache DualMac.icns from assets/icon.png using built-in sips + iconutil."""
+    if not ICON_PNG_PATH.is_file():
+        return None
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    if CACHED_ICNS_PATH.is_file() and CACHED_ICNS_PATH.stat().st_mtime >= ICON_PNG_PATH.stat().st_mtime:
+        return CACHED_ICNS_PATH
+
+    iconset_dir = STATE_DIR / "DualMac.iconset"
+    if iconset_dir.exists():
+        shutil.rmtree(iconset_dir)
+    iconset_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        for sz in (16, 32, 128, 256, 512):
+            subprocess.run(
+                ["sips", "-z", str(sz), str(sz), str(ICON_PNG_PATH), "--out", str(iconset_dir / f"icon_{sz}x{sz}.png")],
+                capture_output=True,
+                check=False,
+            )
+            sz2 = sz * 2
+            out2 = iconset_dir / f"icon_{sz}x{sz}@2x.png"
+            if sz2 <= 512:
+                subprocess.run(
+                    ["sips", "-z", str(sz2), str(sz2), str(ICON_PNG_PATH), "--out", str(out2)],
+                    capture_output=True,
+                    check=False,
+                )
+            else:
+                shutil.copy2(ICON_PNG_PATH, out2)
+        res = subprocess.run(
+            ["iconutil", "-c", "icns", str(iconset_dir), "-o", str(CACHED_ICNS_PATH)],
+            capture_output=True,
+            check=False,
+        )
+        return CACHED_ICNS_PATH if res.returncode == 0 and CACHED_ICNS_PATH.is_file() else None
+    finally:
+        if iconset_dir.exists():
+            shutil.rmtree(iconset_dir, ignore_errors=True)
+
+
+def _brand_patched_bundle(patched: Path) -> None:
+    """Apply DualMac's Apple Pro icon and display name to the local ad-hoc patched bundle."""
+    icns = _ensure_dualmac_icns()
+    resources = patched / "Contents" / "Resources"
+    info_plist = patched / "Contents" / "Info.plist"
+    if not info_plist.is_file():
+        return
+    try:
+        with info_plist.open("rb") as f:
+            plist = plistlib.load(f)
+        if icns is not None and resources.is_dir():
+            shutil.copy2(icns, resources / "DualMac.icns")
+            plist["CFBundleIconFile"] = "DualMac.icns"
+            plist.pop("CFBundleIconName", None)
+        plist["CFBundleDisplayName"] = "DualMac"
+        with info_plist.open("wb") as f:
+            plistlib.dump(plist, f)
+    except Exception:
+        pass
+
+
 def _bundle_signature_stamp(app_bundle: Path, client: str) -> str:
     binary = find_app_binary(app_bundle, client=client)
     st = binary.stat()
-    return f"{app_bundle.resolve()}:{st.st_size}:{int(st.st_mtime)}"
+    icon_mtime = int(ICON_PNG_PATH.stat().st_mtime) if ICON_PNG_PATH.is_file() else 0
+    return f"{app_bundle.resolve()}:{st.st_size}:{int(st.st_mtime)}:icon={icon_mtime}"
 
 
 def prepare_patched_app(source_app: Path, client: str = "chiaki", force: bool = False) -> Path:
@@ -95,6 +164,7 @@ def prepare_patched_app(source_app: Path, client: str = "chiaki", force: bool = 
         raise RuntimeError(f"Failed to copy {source_app}: {cp_res.stderr.strip()}")
 
     subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(patched)], capture_output=True, check=False)
+    _brand_patched_bundle(patched)
 
     sign_res = subprocess.run(
         ["codesign", "--force", "--deep", "--sign", "-", str(patched)],
@@ -124,8 +194,68 @@ def build_launch_env(
         env["DUALMAC_PROFILE_JSON"] = str(profile_json_path)
     if ping_host:
         env["DUALMAC_PING_HOST"] = ping_host
+    if ICON_PNG_PATH.is_file():
+        env["DUALMAC_ICON_PATH"] = str(ICON_PNG_PATH)
     env["SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS"] = "1"
     return env
+
+
+def _activate_running_app_async(proc: subprocess.Popen[bytes], app_bundle: Path) -> None:
+    """Bring the newly spawned app to the foreground once LaunchServices registers its window (zero permissions)."""
+    if os.environ.get("DUALMAC_GUI_MANAGED") == "1":
+        # DualMac.app handles native Cooperative Activation (yieldActivation) directly.
+        return
+
+    def _worker() -> None:
+        try:
+            objc_path = ctypes.util.find_library("objc")
+            if not objc_path:
+                return
+            objc = ctypes.cdll.LoadLibrary(objc_path)
+            ctypes.cdll.LoadLibrary("/System/Library/Frameworks/AppKit.framework/AppKit")
+            objc.objc_getClass.restype = ctypes.c_void_p
+            objc.sel_registerName.restype = ctypes.c_void_p
+
+            msg_ptr_int = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int)(
+                ("objc_msgSend", objc)
+            )
+            msg_bool = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(
+                ("objc_msgSend", objc)
+            )
+            msg_activate = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong)(
+                ("objc_msgSend", objc)
+            )
+
+            cls = objc.objc_getClass(b"NSRunningApplication")
+            sel_by_pid = objc.sel_registerName(b"runningApplicationWithProcessIdentifier:")
+            sel_finished = objc.sel_registerName(b"isFinishedLaunching")
+            sel_active = objc.sel_registerName(b"isActive")
+            sel_activate = objc.sel_registerName(b"activateWithOptions:")
+
+            # Wait up to 8s for NSApplication to finish launching and register with LaunchServices.
+            app_ptr = None
+            for _ in range(80):
+                if proc.poll() is not None:
+                    return
+                app_ptr = msg_ptr_int(cls, sel_by_pid, proc.pid)
+                if app_ptr and msg_bool(app_ptr, sel_finished):
+                    break
+                time.sleep(0.1)
+
+            if not app_ptr or proc.poll() is not None:
+                return
+
+            # NSApplicationActivateAllWindows (1) | NSApplicationActivateIgnoringOtherApps (2)
+            msg_activate(app_ptr, sel_activate, 3)
+            time.sleep(0.15)
+            # On macOS 14+, LaunchServices `open <bundle>` grants reliable foreground focus from Terminal/Raycast
+            # and safely activates the existing process once `isFinishedLaunching` is true.
+            if proc.poll() is None and not msg_bool(app_ptr, sel_active):
+                subprocess.run(["/usr/bin/open", str(app_bundle)], capture_output=True, check=False)
+        except Exception:
+            pass
+
+    threading.Thread(target=_worker, name="dualmac-frontmost", daemon=True).start()
 
 
 def launch_client(
@@ -153,4 +283,6 @@ def launch_client(
             capture_output=True,
             check=False,
         )
-    return subprocess.Popen([str(binary)], env=env)
+    proc = subprocess.Popen([str(binary)], env=env)
+    _activate_running_app_async(proc, app_bundle)
+    return proc

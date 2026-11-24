@@ -34,18 +34,18 @@ Engineered specifically for playing **GTA 6** smoothly on a MacBook over WAN or 
   - **Force Touch Trackpad Haptics & DualSense Lightbar HUD**: Translates live PS5 rumble packets into MacBook Force Touch haptic feedback and mirrors PS5 lightbar colors (including police red/blue flash) onto a subtle translucent window border.
   - **Unobtrusive Floating HUDs**: Compact top-right mode pill (`H`), top-left live **Ping / Jitter / Loss / AWDL** telemetry pill (`;`, 0% CPU when hidden), and single-key PS5 Mic Mute (`[`).
 - **WAN Stream & macOS Network Optimizer** — Eliminates 30–100 ms macOS Wi-Fi lag spikes via an active `awdl0`/`llw0` watchdog, boosts kernel UDP receive buffers (`net.inet.udp.recvspace`), prevents App Nap / display sleep, and supports PSN/UDP firewall bypass (`--bypass-firewall`: Clean DNS `1.1.1.1`, Cloudflare WARP, Tailscale exit-node, or macOS VPN) with guaranteed rollback on exit.
-- **Native macOS `.app` & Raycast Extension** — Launch from Terminal (`dualmac`), Spotlight (`DualMac.app`), or the bundled **Raycast Extension** (`raycast-extension/`).
+- **Native SwiftUI `DualMac.app` & Sandwich Handoff** — Launch from Spotlight or the Dock with live Ping/Jitter/AWDL telemetry, mode cards (`Trackpad + Keys` vs `DualSense`), one-click launch that hands focus straight to PS Remote Play via macOS Cooperative Activation (`yieldActivation`) at the exact same window position, collapses cleanly into a macOS Menu Bar status item, and restores automatically when your session ends. Also includes a bundled **Raycast Extension** (`raycast-extension/`).
 
 ---
 
 ## Architecture
 
 ```text
-dualmac start --client sony --profile gta6
+DualMac.app (native SwiftUI launcher + Menu Bar sandwich)  ──or──  dualmac CLI / Raycast
   ├── dualmac/profiles.py        → exports runtime config + live-save JSON hook
   ├── dualmac/sys_optimizer.py   → caffeinate + App Nap off + optional awdl0/llw0 watchdog & UDP sysctl
   ├── dualmac/firewall_bypass.py → optional Clean DNS / WARP / Tailscale / VPN with rollback
-  └── dualmac/app_bridge.py      → ad-hoc signed RemotePlay.app / chiaki-ng.app
+  └── dualmac/app_bridge.py      → ad-hoc signed RemotePlay.app / chiaki-ng.app + cooperative frontmost activation
         └── DYLD_INSERT_LIBRARIES=libdualmac_sony.dylib (or libdualmac_chiaki.dylib)
               ├── macos_capture.m       (zero-permission Cocoa NSEvent monitor + HUD + Ping pill + Haptics)
               ├── mapper_core.c         (On-Foot / Vehicle / Aircraft + Smart Assists + Touchpad Swipe)
@@ -69,11 +69,12 @@ dualmac start --client sony --profile gta6
 git clone https://github.com/yyamandevrim/dualmac.git
 cd dualmac
 make install
+make install-app   # Installs DualMac.app into /Applications
 dualmac setup
 ```
 
 > Make sure `~/.local/bin` is in your `PATH` (e.g., `export PATH="$HOME/.local/bin:$PATH"` in `~/.zshrc`).
-> `make install` also builds **`build/DualMac.app`** — you can drag it into `/Applications` to launch DualMac from Spotlight or the Dock.
+> After `make install-app`, open **DualMac** straight from Spotlight (`⌘ Space` → `DualMac`) or `/Applications/DualMac.app`.
 
 ### Launch
 
@@ -155,10 +156,11 @@ Designed around the official **GTA 6 Default** layout with **zero F-keys**, **ze
 ## Development & Testing
 
 ```bash
-make build      # Compile arm64 libdualmac_sony.dylib & libdualmac_chiaki.dylib
-make app        # Package build/DualMac.app with native .icns icon
-make test       # Run C mapper_core tests + Python unit tests
-make clean      # Clean build artifacts
+make build        # Compile arm64 libdualmac_sony.dylib & libdualmac_chiaki.dylib
+make app          # Compile native SwiftUI build/DualMac.app with .icns icon
+make install-app  # Install DualMac.app into /Applications
+make test         # Run C mapper_core tests + Python unit tests
+make clean        # Clean build artifacts
 ```
 
 ---

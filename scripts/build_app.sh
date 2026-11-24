@@ -5,10 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="${1:-$ROOT_DIR/build/DualMac.app}"
 ICON_PNG="$ROOT_DIR/assets/icon.png"
 ICONSET_DIR="$ROOT_DIR/build/DualMac.iconset"
+SWIFT_SRC="$ROOT_DIR/native/gui/DualMacApp.swift"
 
+rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-# Generate native macOS .icns from assets/icon.png
+# 1. Generate native macOS .icns from assets/icon.png
 if [[ -f "$ICON_PNG" ]] && command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
   rm -rf "$ICONSET_DIR"
   mkdir -p "$ICONSET_DIR"
@@ -25,6 +27,7 @@ if [[ -f "$ICON_PNG" ]] && command -v sips >/dev/null 2>&1 && command -v iconuti
   rm -rf "$ICONSET_DIR"
 fi
 
+# 2. Write Info.plist (regular Dock + Menu Bar macOS app)
 cat > "$APP_DIR/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -47,28 +50,30 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0.0</string>
+  <string>1.1.0</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>2</string>
+  <key>DualMacRepoRoot</key>
+  <string>${ROOT_DIR}</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
 </dict>
 </plist>
 EOF
 
-cat > "$APP_DIR/Contents/MacOS/DualMac" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-export PATH="/opt/homebrew/bin:/usr/local/bin:\$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
-LOG_DIR="\$HOME/.local/share/dualmac"
-mkdir -p "\$LOG_DIR"
-exec "$ROOT_DIR/bin/dualmac" start --client sony --profile gta6 >>"\$LOG_DIR/app-launch.log" 2>&1
-EOF
+# 3. Compile native SwiftUI + AppKit DualMac GUI binary
+ARCH="$(uname -m)"
+swiftc \
+  -O \
+  -parse-as-library \
+  -target "${ARCH}-apple-macosx13.0" \
+  -framework AppKit \
+  -framework SwiftUI \
+  "$SWIFT_SRC" \
+  -o "$APP_DIR/Contents/MacOS/DualMac"
 
 chmod +x "$APP_DIR/Contents/MacOS/DualMac"
 codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
-echo "Built macOS app bundle: $APP_DIR"
+echo "Built native macOS GUI app bundle: $APP_DIR"

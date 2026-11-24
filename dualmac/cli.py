@@ -231,8 +231,9 @@ def cmd_start(args: argparse.Namespace) -> int:
             ping_host=args.host,
         )
         label = "Sony RemotePlay" if client == "sony" else "chiaki-ng"
+        print(f"  [launch] {label} started (pid={proc.pid})", flush=True)
         for note in optimizer.boost_process(proc.pid, label=label):
-            print(f"  [opt] {note}")
+            print(f"  [opt] {note}", flush=True)
         return proc.wait()
     finally:
         if bypass is not None:

@@ -83,6 +83,7 @@ static pthread_t g_net_thread;
 static NSHashTable<NSWindow *> *g_seen_windows = nil;
 static id g_window_close_observer = nil;
 static dispatch_source_t g_window_watch_timer = nil;
+static BOOL g_applied_target_center = NO;
 
 static BOOL is_trackable_app_window(NSWindow *win) {
     if (win == nil) return NO;
@@ -93,6 +94,45 @@ static BOOL is_trackable_app_window(NSWindow *win) {
     return YES;
 }
 
+static void apply_dualmac_branding_on_main(void) {
+    if (NSApp == nil) return;
+    const char *icon_env = getenv("DUALMAC_ICON_PATH");
+    if (icon_env && icon_env[0] != '\0') {
+        NSString *path = [NSString stringWithUTF8String:icon_env];
+        NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
+        if (img != nil) {
+            [NSApp setApplicationIconImage:img];
+        }
+    }
+}
+
+static void position_window_at_target_center_if_needed(NSWindow *win) {
+    if (g_applied_target_center || win == nil) return;
+    if ((win.styleMask & NSWindowStyleMaskFullScreen) != 0) {
+        g_applied_target_center = YES;
+        return;
+    }
+    const char *center_env = getenv("DUALMAC_TARGET_CENTER");
+    if (!center_env || center_env[0] == '\0') {
+        g_applied_target_center = YES;
+        return;
+    }
+    double cx = 0.0, cy = 0.0;
+    if (sscanf(center_env, "%lf,%lf", &cx, &cy) == 2 && cx > 0.0 && cy > 0.0) {
+        NSRect wf = win.frame;
+        NSScreen *scr = win.screen ?: [NSScreen mainScreen];
+        NSRect vf = scr ? scr.visibleFrame : NSMakeRect(0, 0, 1440, 900);
+        CGFloat ox = (CGFloat)cx - wf.size.width * 0.5;
+        CGFloat oy = (CGFloat)cy - wf.size.height * 0.5;
+        if (ox < vf.origin.x) ox = vf.origin.x;
+        if (oy < vf.origin.y) oy = vf.origin.y;
+        if (ox + wf.size.width > NSMaxX(vf)) ox = NSMaxX(vf) - wf.size.width;
+        if (oy + wf.size.height > NSMaxY(vf)) oy = NSMaxY(vf) - wf.size.height;
+        [win setFrameOrigin:NSMakePoint(ox, oy)];
+    }
+    g_applied_target_center = YES;
+}
+
 static void bring_window_to_front_on_main(NSWindow *win) {
     if (NSApp == nil) return;
 #pragma clang diagnostic push
@@ -101,6 +141,9 @@ static void bring_window_to_front_on_main(NSWindow *win) {
         activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
     [NSApp activateIgnoringOtherApps:YES];
 #pragma clang diagnostic pop
+    if ([NSApp respondsToSelector:@selector(activate)]) {
+        [(id)NSApp performSelector:@selector(activate)];
+    }
     if (win != nil) {
         [win makeKeyAndOrderFront:nil];
         [win orderFrontRegardless];
@@ -121,6 +164,7 @@ static void check_new_windows_and_focus_on_main(void) {
         }
     }
     if (newest != nil) {
+        position_window_at_target_center_if_needed(newest);
         bring_window_to_front_on_main(newest);
     }
 }
@@ -1029,7 +1073,8 @@ static void install_cocoa_monitors_on_main(void) {
             }
         }];
 
-        /* Bring newly launched app & any newly opened Remote Play stream window to the front */
+        /* Apply DualMac icon & bring newly launched app / Remote Play windows to front */
+        apply_dualmac_branding_on_main();
         bring_window_to_front_on_main(nil);
         check_new_windows_and_focus_on_main();
         if (g_window_watch_timer == nil) {
