@@ -20,7 +20,12 @@ from .app_bridge import (
     prepare_patched_app,
     resolve_launched_pid,
 )
-from .firewall_bypass import FirewallBypass, probe_psn_firewall, restore_firewall_bypass
+from .firewall_bypass import (
+    DEFAULT_TAILSCALE_EXIT_NODE,
+    FirewallBypass,
+    probe_psn_firewall,
+    restore_firewall_bypass,
+)
 from .net_probe import probe_network
 from .profiles import export_runtime_config, load_profile
 from .stream_profile import (
@@ -62,7 +67,7 @@ def _print_network_report(host: str) -> tuple[object, object]:
 def cmd_doctor(args: argparse.Namespace) -> int:
     chiaki = find_chiaki_app(args.chiaki_app)
     sony = find_sony_app(args.sony_app)
-    fw = probe_psn_firewall()
+    fw = probe_psn_firewall(exit_node=args.exit_node)
 
     if args.json:
         report = probe_network(host=args.host)
@@ -89,10 +94,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if fw.warp_available:
         backends.append("warp (Cloudflare WARP)")
     if fw.tailscale_available:
-        backends.append(f"tailscale ({'running' if fw.tailscale_running else 'installed, app closed'})")
+        backends.append(f"tailscale ({fw.tailscale_state})")
     if fw.macos_vpns:
         backends.append(f"vpn ({', '.join(fw.macos_vpns)})")
     print(f"  Bypass backends   : {', '.join(backends)}")
+    if fw.tailscale_available:
+        print(f"  Tailscale exit    : {fw.tailscale_exit_node} -> {fw.tailscale_exit_node_status}")
 
     print("\n=== Installation Check ===")
     print(f"  Sony RemotePlay   : {sony or 'NOT FOUND'} ({'ready' if PATCHED_SONY_APP.exists() else 'run `senza setup`'})")
@@ -297,6 +304,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_doc = sub.add_parser("doctor", help="Measure WAN latency/jitter/loss and check macOS & client readiness")
     p_doc.add_argument("--host", default="1.1.1.1", help="Target host/IP for WAN ping & MTU check (default: 1.1.1.1)")
+    p_doc.add_argument(
+        "--exit-node",
+        default=DEFAULT_TAILSCALE_EXIT_NODE,
+        help=f"Tailscale exit node IP/hostname to check readiness for (default: {DEFAULT_TAILSCALE_EXIT_NODE})",
+    )
     p_doc.add_argument("--chiaki-app", default=None, help="Custom path to chiaki-ng.app")
     p_doc.add_argument("--sony-app", default=None, help="Custom path to Sony RemotePlay.app")
     p_doc.add_argument("--json", action="store_true", help="Emit structured JSON output (used by Raycast extension)")
@@ -332,7 +344,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument(
         "--exit-node",
         default=None,
-        help="Optional Tailscale exit node (IP or hostname) when using --bypass-firewall tailscale/auto",
+        help=f"Tailscale exit node IP/hostname (default in tailscale mode: {DEFAULT_TAILSCALE_EXIT_NODE})",
     )
     p_start.add_argument("--hybrid", action="store_true", help="Hybrid Hot-Swap mode: start on physical DualSense with shared Ping/HUD/Mic shortcuts and instant '0' Trackpad switch")
     p_start.add_argument("--controller", "--no-kbm", dest="controller", action="store_true", help="Use physical DualSense/controller natively (keep WAN/macOS optimizations, skip virtual KBM pad)")

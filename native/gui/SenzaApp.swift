@@ -80,6 +80,10 @@ struct DoctorResponse: Decodable {
         let psn_cf_tls_ok: Bool
         let udp_high_port_ok: Bool
         let diagnosis: String
+        let tailscale_state: String?
+        let tailscale_exit_node: String?
+        let tailscale_exit_node_ready: Bool?
+        let tailscale_exit_node_status: String?
     }
     struct Preset: Decodable {
         let name: String
@@ -143,6 +147,7 @@ struct SenzaCLI {
 @MainActor
 final class SenzaController: ObservableObject {
     static let shared = SenzaController()
+    static let defaultTailscaleExitNode = "100.123.154.74"
 
     @Published var inputMode: InputMode {
         didSet { UserDefaults.standard.set(inputMode.rawValue, forKey: "senza.inputMode") }
@@ -158,6 +163,9 @@ final class SenzaController: ObservableObject {
     }
     @Published var firewall: FirewallMode {
         didSet { UserDefaults.standard.set(firewall.rawValue, forKey: "senza.firewall") }
+    }
+    @Published var tailscaleExitNode: String {
+        didSet { UserDefaults.standard.set(tailscaleExitNode, forKey: "senza.exitNode") }
     }
     @Published var probeHost: String {
         didSet { UserDefaults.standard.set(probeHost, forKey: "senza.host") }
@@ -189,8 +197,15 @@ final class SenzaController: ObservableObject {
         self.preset = StreamPresetOption(rawValue: ud.string(forKey: "senza.preset") ?? "") ?? .auto
         self.privileged = ud.object(forKey: "senza.privileged") == nil ? true : ud.bool(forKey: "senza.privileged")
         self.firewall = FirewallMode(rawValue: ud.string(forKey: "senza.firewall") ?? "") ?? .off
+        let savedExit = ud.string(forKey: "senza.exitNode")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.tailscaleExitNode = savedExit.isEmpty ? Self.defaultTailscaleExitNode : savedExit
         self.probeHost = ud.string(forKey: "senza.host") ?? "1.1.1.1"
         setupControllerObservers()
+    }
+
+    var resolvedExitNode: String {
+        let trimmed = tailscaleExitNode.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Self.defaultTailscaleExitNode : trimmed
     }
 
     func selectInputMode(_ mode: InputMode) {
@@ -263,12 +278,13 @@ final class SenzaController: ObservableObject {
         }
         doctorLoading = true
         let host = probeHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "1.1.1.1" : probeHost
+        let exitNode = resolvedExitNode
 
         DispatchQueue.global(qos: .userInitiated).async {
             let proc = Process()
             proc.executableURL = cli.executable
             proc.currentDirectoryURL = cli.workingDir
-            proc.arguments = ["doctor", "--host", host, "--json"]
+            proc.arguments = ["doctor", "--host", host, "--exit-node", exitNode, "--json"]
             proc.environment = Self.baseEnv()
 
             let outPipe = Pipe()
@@ -330,6 +346,9 @@ final class SenzaController: ObservableObject {
         }
         if firewall != .off {
             args += ["--bypass-firewall", firewall.rawValue]
+            if firewall == .tailscale {
+                args += ["--exit-node", resolvedExitNode]
+            }
         }
 
         var env = Self.baseEnv()
@@ -352,7 +371,12 @@ final class SenzaController: ObservableObject {
         proc.standardOutput = pipe
         proc.standardError = pipe
 
-        setPhase(.launching(privileged ? "Authorizing Wi-Fi & UDP boost…" : "Launching \(client.displayName)…"))
+        let launchStatus: String = {
+            if privileged { return "Authorizing Wi-Fi & UDP boost…" }
+            if firewall == .tailscale { return "Connecting Tailscale exit node \(resolvedExitNode)…" }
+            return "Launching \(client.displayName)…"
+        }()
+        setPhase(.launching(launchStatus))
         statusNote = "Preparing \(client.displayName)…"
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -626,7 +650,7 @@ struct SenzaRootView: View {
             .padding(.top, 34)
             .padding(.bottom, 16)
         }
-        .frame(width: 486, height: 604)
+        .frame(width: 486, height: 648)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $ctrl.showControlsSheet) {
             ControlsCheatSheetView(isPresented: $ctrl.showControlsSheet)
@@ -840,10 +864,65 @@ struct SenzaRootView: View {
                 .labelsHidden()
                 .frame(width: 126)
             }
+
+            if ctrl.firewall == .tailscale {
+                Divider().overlay(Color.white.opacity(0.08))
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text("Exit Node")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.82))
+                        Spacer()
+                        TextField("100.123.154.74", text: $ctrl.tailscaleExitNode)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.trailing)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .frame(width: 156)
+                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 0.75))
+                            .onSubmit {
+                                ctrl.refreshDoctor()
+                            }
+                    }
+
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(tailscaleStatusColor)
+                            .frame(width: 6, height: 6)
+                        Text(tailscaleStatusText)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer()
+                    }
+                }
+            }
         }
         .padding(14)
         .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(Color.white.opacity(0.09), lineWidth: 0.75))
+    }
+
+    private var tailscaleStatusColor: Color {
+        guard let fw = ctrl.doctor?.firewall else { return .gray }
+        if fw.tailscale_exit_node_ready == true { return .green }
+        if fw.tailscale_state == "Stopped" { return sapphire }
+        if fw.tailscale_state == "NeedsLogin" || fw.tailscale_state == "NotRunning" { return .red }
+        return .orange
+    }
+
+    private var tailscaleStatusText: String {
+        guard let fw = ctrl.doctor?.firewall else {
+            return "Checking Tailscale exit node \(ctrl.resolvedExitNode)…"
+        }
+        if let st = fw.tailscale_exit_node_status, !st.isEmpty {
+            return st
+        }
+        return "Target: \(ctrl.resolvedExitNode) · auto-starts Tailscale on Launch"
     }
 
     private func errorBanner(_ message: String) -> some View {
@@ -2194,7 +2273,7 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private func setupMainWindow() {
         let hosting = NSHostingController(rootView: SenzaRootView(ctrl: ctrl))
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 486, height: 604),
+            contentRect: NSRect(x: 0, y: 0, width: 486, height: 648),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false

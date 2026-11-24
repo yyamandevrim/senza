@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import os
 import re
 import shlex
 import shutil
@@ -19,6 +20,7 @@ STATE_DIR = Path.home() / ".local" / "share" / "senza"
 BYPASS_STATE_FILE = STATE_DIR / "bypass_state.json"
 
 CLEAN_DNS_SERVERS: tuple[str, ...] = ("1.1.1.1", "1.0.0.1")
+DEFAULT_TAILSCALE_EXIT_NODE: str = "100.123.154.74"
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
@@ -48,14 +50,48 @@ def find_warp_cli() -> str | None:
     return None
 
 
-def find_tailscale_cli() -> str | None:
-    found = shutil.which("tailscale")
-    if found:
-        return found
+def _tailscale_cli_candidates() -> list[str]:
+    """Return candidate Tailscale binaries with macOS Tailscale.app prioritized over Homebrew CLI."""
+    cands: list[str] = []
     app_cli = Path("/Applications/Tailscale.app/Contents/MacOS/Tailscale")
     if app_cli.is_file():
-        return str(app_cli)
+        cands.append(str(app_cli))
+    which_cli = shutil.which("tailscale")
+    if which_cli and which_cli not in cands:
+        cands.append(which_cli)
+    for extra in ("/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"):
+        if Path(extra).is_file() and extra not in cands:
+            cands.append(extra)
+    return cands
+
+
+def _tailscale_status_json(ts_cli: str, runner: Runner = _default_runner) -> dict[str, Any] | None:
+    res = runner([ts_cli, "status", "--json"])
+    raw = (res.stdout or "").strip()
+    if not raw.startswith("{"):
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if isinstance(data, dict) and "BackendState" in data:
+        return data
     return None
+
+
+def find_tailscale_cli(runner: Runner | None = None) -> str | None:
+    """Find the Tailscale CLI that talks to the active macOS backend (GUI App Network Extension or tailscaled)."""
+    cands = _tailscale_cli_candidates()
+    if not cands:
+        return None
+    if len(cands) == 1 or runner is None:
+        return cands[0]
+
+    # Prefer the candidate that can actually speak to a live Tailscale backend (even if Stopped)
+    for cand in cands:
+        if _tailscale_status_json(cand, runner) is not None:
+            return cand
+    return cands[0]
 
 
 def list_macos_vpns(runner: Runner = _default_runner) -> list[str]:
@@ -102,6 +138,122 @@ def get_dns_servers(service: str, runner: Runner = _default_runner) -> list[str]
     return lines
 
 
+def _tailscale_find_peer(data: dict[str, Any], target: str) -> dict[str, Any] | None:
+    needle = target.strip().lower().rstrip(".")
+    if not needle:
+        return None
+    peers = data.get("Peer") or {}
+    for peer in peers.values():
+        if not isinstance(peer, dict):
+            continue
+        ips = [str(ip).strip().lower() for ip in (peer.get("TailscaleIPs") or [])]
+        if needle in ips:
+            return peer
+        host = str(peer.get("HostName") or "").strip().lower()
+        dns = str(peer.get("DNSName") or "").strip().lower().rstrip(".")
+        short_dns = dns.split(".", 1)[0] if dns else ""
+        if needle in (host, dns, short_dns):
+            return peer
+    return None
+
+
+def _tailscale_active_exit_node(data: dict[str, Any]) -> str | None:
+    ex_status = data.get("ExitNodeStatus")
+    if isinstance(ex_status, dict):
+        ips = ex_status.get("TailscaleIPs") or []
+        if ips:
+            return str(ips[0]).split("/", 1)[0]
+    peers = data.get("Peer") or {}
+    for peer in peers.values():
+        if isinstance(peer, dict) and peer.get("ExitNode"):
+            ips = peer.get("TailscaleIPs") or []
+            if ips:
+                return str(ips[0])
+    return None
+
+
+def _tailscale_list_exit_nodes(data: dict[str, Any]) -> list[str]:
+    nodes: list[str] = []
+    peers = data.get("Peer") or {}
+    for peer in peers.values():
+        if isinstance(peer, dict) and peer.get("ExitNodeOption") and peer.get("Online"):
+            ips = peer.get("TailscaleIPs") or []
+            if ips:
+                nodes.append(str(ips[0]))
+            elif peer.get("DNSName"):
+                nodes.append(str(peer["DNSName"]).rstrip("."))
+    return nodes
+
+
+def _tailscale_discover_exit_node(ts_cli: str, runner: Runner) -> str | None:
+    data = _tailscale_status_json(ts_cli, runner)
+    if not data:
+        return None
+    nodes = _tailscale_list_exit_nodes(data)
+    if DEFAULT_TAILSCALE_EXIT_NODE in nodes:
+        return DEFAULT_TAILSCALE_EXIT_NODE
+    return nodes[0] if nodes else None
+
+
+def inspect_tailscale_exit_node(
+    ts_cli: str,
+    target: str = DEFAULT_TAILSCALE_EXIT_NODE,
+    runner: Runner = _default_runner,
+) -> dict[str, Any]:
+    """Return structured readiness status for Tailscale and a specific exit node."""
+    info: dict[str, Any] = {
+        "backend_state": "NotRunning",
+        "target": target,
+        "ready": False,
+        "peer_found": False,
+        "peer_online": False,
+        "exit_node_option": False,
+        "peer_name": None,
+        "active_exit_node": None,
+        "available_exit_nodes": [],
+        "status_text": "Tailscale app not running",
+    }
+    data = _tailscale_status_json(ts_cli, runner)
+    if not data:
+        return info
+
+    state = str(data.get("BackendState") or "Unknown")
+    info["backend_state"] = state
+    info["active_exit_node"] = _tailscale_active_exit_node(data)
+    info["available_exit_nodes"] = _tailscale_list_exit_nodes(data)
+
+    if state == "NeedsLogin":
+        info["status_text"] = "Tailscale needs login (open Tailscale app)"
+        return info
+    if state == "Stopped":
+        info["status_text"] = f"Tailscale stopped (will auto-start & use {target} on Launch)"
+        return info
+    if state != "Running":
+        info["status_text"] = f"Tailscale state: {state}"
+        return info
+
+    peer = _tailscale_find_peer(data, target)
+    if not peer:
+        info["status_text"] = f"{target} not in tailnet yet (waiting for share/ACL access)"
+        return info
+
+    info["peer_found"] = True
+    info["peer_online"] = bool(peer.get("Online"))
+    info["exit_node_option"] = bool(peer.get("ExitNodeOption"))
+    peer_name = str(peer.get("HostName") or str(peer.get("DNSName") or "").rstrip(".") or target)
+    info["peer_name"] = peer_name
+
+    if not info["exit_node_option"]:
+        info["status_text"] = f"{target} ({peer_name}) visible, but Exit Node permission not enabled yet"
+    elif not info["peer_online"]:
+        info["status_text"] = f"{target} ({peer_name}) is offline"
+    else:
+        info["ready"] = True
+        active_tag = " · ACTIVE" if info["active_exit_node"] == target else ""
+        info["status_text"] = f"{target} ({peer_name}) ONLINE & READY{active_tag}"
+    return info
+
+
 @dataclass
 class FirewallProbeReport:
     psn_sys_tls_ok: bool = False
@@ -111,6 +263,11 @@ class FirewallProbeReport:
     warp_available: bool = False
     tailscale_available: bool = False
     tailscale_running: bool = False
+    tailscale_state: str = "not_installed"
+    tailscale_exit_node: str = DEFAULT_TAILSCALE_EXIT_NODE
+    tailscale_exit_node_ready: bool = False
+    tailscale_exit_node_status: str = ""
+    tailscale_available_exit_nodes: list[str] = field(default_factory=list)
     macos_vpns: list[str] = field(default_factory=list)
     diagnosis: str = "unknown"
 
@@ -154,15 +311,23 @@ def _resolve_via_server(hostname: str, dns_server: str | None, runner: Runner) -
     return None
 
 
-def probe_psn_firewall(runner: Runner = _default_runner) -> FirewallProbeReport:
+def probe_psn_firewall(
+    runner: Runner = _default_runner,
+    exit_node: str | None = None,
+) -> FirewallProbeReport:
     """Detect whether the current network blocks PSN via DNS/TLS or blocks outbound UDP gaming ports."""
-    rep = FirewallProbeReport()
+    target_exit = (exit_node or os.environ.get("SENZA_EXIT_NODE") or DEFAULT_TAILSCALE_EXIT_NODE).strip()
+    rep = FirewallProbeReport(tailscale_exit_node=target_exit)
     rep.warp_available = find_warp_cli() is not None
-    ts_cli = find_tailscale_cli()
+    ts_cli = find_tailscale_cli(runner)
     rep.tailscale_available = ts_cli is not None
     if ts_cli:
-        ts_res = runner([ts_cli, "status", "--json"])
-        rep.tailscale_running = ts_res.returncode == 0
+        ts_info = inspect_tailscale_exit_node(ts_cli, target=target_exit, runner=runner)
+        rep.tailscale_state = str(ts_info["backend_state"])
+        rep.tailscale_running = rep.tailscale_state == "Running"
+        rep.tailscale_exit_node_ready = bool(ts_info["ready"])
+        rep.tailscale_exit_node_status = str(ts_info["status_text"])
+        rep.tailscale_available_exit_nodes = list(ts_info["available_exit_nodes"])
     rep.macos_vpns = list_macos_vpns(runner)
 
     psn_host = "m.np.playstation.com"
@@ -178,41 +343,21 @@ def probe_psn_firewall(runner: Runner = _default_runner) -> FirewallProbeReport:
     rep.udp_3478_ok = _stun_check("stun.cloudflare.com", 3478)
 
     if not rep.psn_sys_tls_ok and rep.psn_cf_tls_ok and not rep.udp_high_port_ok:
-        rep.diagnosis = "DNS/CDN PSN block + Outbound UDP firewall (needs --bypass-firewall + WARP/Tailscale/VPN)"
+        rep.diagnosis = "DNS/CDN PSN block + Outbound UDP firewall (use --bypass-firewall tailscale or warp)"
     elif not rep.psn_sys_tls_ok and rep.psn_cf_tls_ok:
-        rep.diagnosis = "DNS/CDN PSN block (fixed immediately by --bypass-firewall dns)"
+        rep.diagnosis = "DNS/CDN PSN block (fixed immediately by --bypass-firewall dns or tailscale)"
     elif not rep.psn_sys_tls_ok and not rep.psn_cf_tls_ok:
-        rep.diagnosis = "Strict PSN HTTPS/DPI block (needs full tunnel: --bypass-firewall warp or tailscale)"
+        rep.diagnosis = "Strict PSN HTTPS/DPI block (needs full tunnel: --bypass-firewall tailscale or warp)"
     elif not rep.udp_high_port_ok:
-        rep.diagnosis = "Outbound UDP gaming ports blocked (needs full tunnel: --bypass-firewall warp or tailscale)"
+        rep.diagnosis = "Outbound UDP gaming ports blocked (needs full tunnel: --bypass-firewall tailscale or warp)"
     else:
         rep.diagnosis = "No PSN/UDP firewall block detected"
 
     return rep
 
 
-def _tailscale_discover_exit_node(ts_cli: str, runner: Runner) -> str | None:
-    res = runner([ts_cli, "status", "--json"])
-    if res.returncode != 0:
-        return None
-    try:
-        data = json.loads(res.stdout)
-    except ValueError:
-        return None
-    peers = data.get("Peer") or {}
-    for peer in peers.values():
-        if peer.get("ExitNodeOption") and peer.get("Online"):
-            ips = peer.get("TailscaleIPs") or []
-            if ips:
-                return str(ips[0])
-            dns_name = peer.get("DNSName")
-            if dns_name:
-                return str(dns_name).rstrip(".")
-    return None
-
-
 class FirewallBypass:
-    """Applies PSN/Firewall bypass (Clean DNS + optional WARP/Tailscale/macOS VPN) with guaranteed rollback."""
+    """Applies PSN/Firewall bypass (Clean DNS + optional WARP/Tailscale exit-node/macOS VPN) with guaranteed rollback."""
 
     def __init__(
         self,
@@ -224,7 +369,7 @@ class FirewallBypass:
         state_file: Path = BYPASS_STATE_FILE,
     ) -> None:
         self.mode = mode.strip()
-        self.exit_node = exit_node
+        self.exit_node = exit_node.strip() if exit_node and exit_node.strip() else None
         self.gui_sudo = gui_sudo
         self.dry_run = dry_run
         self.runner = runner
@@ -235,7 +380,9 @@ class FirewallBypass:
         self._prev_dns: list[str] | None = None
         self._warp_connected_by_us = False
         self._warp_cli: str | None = None
+        self._tailscale_started_by_us = False
         self._tailscale_exit_set_by_us = False
+        self._prev_tailscale_exit_node: str | None = None
         self._tailscale_cli: str | None = None
         self._vpn_started_by_us: str | None = None
 
@@ -248,7 +395,9 @@ class FirewallBypass:
             "prev_dns": self._prev_dns,
             "warp_connected_by_us": self._warp_connected_by_us,
             "warp_cli": self._warp_cli,
+            "tailscale_started_by_us": self._tailscale_started_by_us,
             "tailscale_exit_set_by_us": self._tailscale_exit_set_by_us,
+            "prev_tailscale_exit_node": self._prev_tailscale_exit_node,
             "tailscale_cli": self._tailscale_cli,
             "vpn_started_by_us": self._vpn_started_by_us,
         }
@@ -360,34 +509,159 @@ class FirewallBypass:
             notes.append("Warning: Cloudflare WARP still finalizing connection after 15s (check `warp-cli status`)")
         return notes
 
+    @staticmethod
+    def _parse_tailscale_ping(stdout: str) -> str | None:
+        for raw_line in stdout.splitlines():
+            line = raw_line.strip()
+            if not line.startswith("pong from "):
+                continue
+            derp_match = re.search(r"via\s+(DERP\([^)]+\))\s+in\s+(\S+)", line)
+            if derp_match:
+                return f"{derp_match.group(1)} TCP-443 relay · {derp_match.group(2)}"
+            direct_match = re.search(r"via\s+(\S+)\s+in\s+(\S+)", line)
+            if direct_match:
+                return f"Direct UDP ({direct_match.group(1)}) · {direct_match.group(2)}"
+            return line
+        return None
+
     def _connect_tailscale(self) -> list[str]:
         notes: list[str] = []
-        ts = find_tailscale_cli()
+        ts = find_tailscale_cli(self.runner)
         if not ts:
             notes.append("Tailscale CLI not found (`brew install --cask tailscale-app`).")
             return notes
 
-        target_node = self.exit_node or _tailscale_discover_exit_node(ts, self.runner)
-        if not target_node:
+        target_node = (
+            self.exit_node
+            or (os.environ.get("SENZA_EXIT_NODE") or "").strip()
+            or _tailscale_discover_exit_node(ts, self.runner)
+            or DEFAULT_TAILSCALE_EXIT_NODE
+        )
+
+        if self.dry_run:
+            data = _tailscale_status_json(ts, self.runner)
+            state = str(data.get("BackendState") or "NotRunning") if data else "NotRunning"
+            if state != "Running":
+                notes.append(f"[dry-run] {ts} up  (current Tailscale state: {state})")
+            notes.append(f"[dry-run] {ts} set --exit-node={target_node} --exit-node-allow-lan-access=true")
+            notes.append(f"[dry-run] {ts} ping -c 1 --timeout=3s {target_node}")
+            return notes
+
+        data = _tailscale_status_json(ts, self.runner)
+        if data is None and Path("/Applications/Tailscale.app").exists():
+            self.runner(["open", "-g", "-a", "Tailscale"])
+            for _ in range(16):
+                time.sleep(0.5)
+                data = _tailscale_status_json(ts, self.runner)
+                if data is not None:
+                    break
+
+        if data is None:
             notes.append(
-                "Tailscale has no active online Exit Node — open Tailscale app and log in, "
-                "or specify `--exit-node <node-ip-or-name>` (works over TCP 443 even if all UDP is blocked)."
+                "Warning: could not reach Tailscale macOS backend — open Tailscale.app once to initialize its Network Extension."
             )
             return notes
 
-        cmd = [ts, "set", f"--exit-node={target_node}", "--exit-node-allow-lan-access=true"]
-        if self.dry_run:
-            notes.append(f"[dry-run] {' '.join(cmd)}")
+        state = str(data.get("BackendState") or "Unknown")
+        if state == "NeedsLogin":
+            notes.append("Warning: Tailscale requires sign-in — open Tailscale.app and log in first.")
             return notes
 
-        res = self.runner(cmd)
-        if res.returncode == 0:
+        if state != "Running":
+            if state == "Stopped":
+                up_res = self.runner([ts, "up"])
+                if up_res.returncode != 0:
+                    notes.append(
+                        f"Warning: `tailscale up` failed ({up_res.stderr.strip() or up_res.stdout.strip()})"
+                    )
+                    return notes
+                self._tailscale_started_by_us = True
+                self._tailscale_cli = ts
+                self._write_state()
+                notes.append("Started Tailscale network (was Stopped)")
+
+            for _ in range(24):
+                data = _tailscale_status_json(ts, self.runner)
+                cur_state = str(data.get("BackendState") or "") if data else ""
+                if cur_state == "Running":
+                    break
+                if cur_state == "NeedsLogin":
+                    notes.append("Warning: Tailscale requires sign-in — open Tailscale.app and log in first.")
+                    return notes
+                time.sleep(0.5)
+
+            if not data or str(data.get("BackendState") or "") != "Running":
+                notes.append("Warning: Tailscale did not reach Running state within 12s (check Tailscale.app).")
+                return notes
+
+        self._prev_tailscale_exit_node = _tailscale_active_exit_node(data)
+        peer = _tailscale_find_peer(data, target_node)
+
+        # Right after `tailscale up`, the netmap peer table can take a couple seconds to populate.
+        if peer is None and (self._tailscale_started_by_us or not data.get("Peer")):
+            for _ in range(8):
+                time.sleep(0.5)
+                refreshed = _tailscale_status_json(ts, self.runner)
+                if refreshed:
+                    data = refreshed
+                    peer = _tailscale_find_peer(data, target_node)
+                    if peer is not None:
+                        break
+
+        if peer is None:
+            avail = _tailscale_list_exit_nodes(data)
+            msg = (
+                f"Warning: Tailscale exit node {target_node} is not in your tailnet yet "
+                "(waiting for share/ACL access)."
+            )
+            if avail:
+                msg += f" Available exit nodes: {', '.join(avail)}"
+            notes.append(msg)
+            return notes
+
+        peer_name = str(peer.get("HostName") or str(peer.get("DNSName") or "").rstrip(".") or target_node)
+        if not peer.get("ExitNodeOption"):
+            notes.append(
+                f"Warning: {target_node} ({peer_name}) is visible in tailnet, "
+                "but Exit Node permission is not enabled on it yet."
+            )
+            return notes
+        if not peer.get("Online"):
+            notes.append(f"Warning: Tailscale exit node {target_node} ({peer_name}) is currently OFFLINE.")
+            return notes
+
+        peer_ips = {str(ip).strip().lower() for ip in (peer.get("TailscaleIPs") or [])}
+        prev_exit = (self._prev_tailscale_exit_node or "").strip().lower()
+        already_using_target = bool(
+            prev_exit and (prev_exit == target_node.strip().lower() or prev_exit in peer_ips)
+        )
+
+        if not already_using_target:
+            cmd = [ts, "set", f"--exit-node={target_node}", "--exit-node-allow-lan-access=true"]
+            res = self.runner(cmd)
+            if res.returncode != 0:
+                notes.append(f"Warning: Tailscale exit-node failed ({res.stderr.strip() or res.stdout.strip()})")
+                return notes
+
             self._tailscale_exit_set_by_us = True
             self._tailscale_cli = ts
             self._write_state()
-            notes.append(f"Tailscale Exit Node active ({target_node}) — TCP 443 DERP bypasses strict UDP firewalls")
+
+            for _ in range(12):
+                chk = _tailscale_status_json(ts, self.runner)
+                ex_st = chk.get("ExitNodeStatus") if chk else None
+                if isinstance(ex_st, dict) and ex_st.get("Online"):
+                    break
+                time.sleep(0.5)
+
+        ping_res = self.runner([ts, "ping", "-c", "1", "--timeout=3s", target_node])
+        path_info = self._parse_tailscale_ping(ping_res.stdout) if ping_res.returncode == 0 else None
+
+        prefix = "Tailscale Exit Node already active" if already_using_target else "Tailscale Exit Node ACTIVE"
+        if path_info:
+            notes.append(f"{prefix}: {target_node} ({peer_name}) · {path_info}")
         else:
-            notes.append(f"Warning: Tailscale exit-node failed ({res.stderr.strip() or res.stdout.strip()})")
+            notes.append(f"{prefix}: {target_node} ({peer_name}) — LAN access kept, firewall bypassed")
         return notes
 
     def _connect_macos_vpn(self, vpn_name: str) -> list[str]:
@@ -432,8 +706,10 @@ class FirewallBypass:
                 f"Invalid --bypass-firewall mode '{self.mode}'. Use: auto, dns, warp, tailscale, or vpn:<ServiceName>"
             )
 
-        # Always apply Clean DNS first (fixes poisoned ISP/campus PSN DNS immediately)
-        notes.extend(self._apply_clean_dns())
+        # In pure Tailscale Exit-Node mode, Tailscale handles all DNS + TCP/UDP routing through its utun
+        # tunnel and uses built-in bootstrap DoH — no sudo networksetup DNS modification needed.
+        if mode != "tailscale":
+            notes.extend(self._apply_clean_dns())
 
         if mode == "dns":
             pass
@@ -452,7 +728,7 @@ class FirewallBypass:
             elif find_warp_cli():
                 notes.extend(self._connect_warp())
             else:
-                ts = find_tailscale_cli()
+                ts = find_tailscale_cli(self.runner)
                 ts_node = _tailscale_discover_exit_node(ts, self.runner) if ts else None
                 if ts_node:
                     notes.extend(self._connect_tailscale())
@@ -461,7 +737,7 @@ class FirewallBypass:
                         notes.append(
                             "Notice: Clean DNS (1.1.1.1) applied, but this firewall ALSO blocks outbound UDP. "
                             "For full PS Remote Play tunnel bypass, install Cloudflare WARP (`brew install --cask cloudflare-warp`) "
-                            "or enable a Tailscale Exit Node (`--bypass-firewall tailscale --exit-node <node>`)."
+                            f"or enable Tailscale Exit Node (`--bypass-firewall tailscale --exit-node {DEFAULT_TAILSCALE_EXIT_NODE}`)."
                         )
 
         if not self.dry_run:
@@ -483,12 +759,25 @@ class FirewallBypass:
             self._warp_connected_by_us = False
 
         if self._tailscale_exit_set_by_us and self._tailscale_cli:
-            res = self.runner([self._tailscale_cli, "set", "--exit-node="])
+            prev_node = self._prev_tailscale_exit_node or ""
+            res = self.runner([self._tailscale_cli, "set", f"--exit-node={prev_node}"])
             if res.returncode == 0:
-                notes.append("Cleared Tailscale exit-node routing")
+                if prev_node:
+                    notes.append(f"Restored previous Tailscale exit-node ({prev_node})")
+                else:
+                    notes.append("Cleared Tailscale exit-node routing")
             else:
-                notes.append(f"Warning: failed to clear Tailscale exit-node ({res.stderr.strip()})")
+                notes.append(f"Warning: failed to restore Tailscale exit-node ({res.stderr.strip()})")
             self._tailscale_exit_set_by_us = False
+            self._prev_tailscale_exit_node = None
+
+        if self._tailscale_started_by_us and self._tailscale_cli:
+            res = self.runner([self._tailscale_cli, "down"])
+            if res.returncode == 0:
+                notes.append("Stopped Tailscale (restored previous Stopped state)")
+            else:
+                notes.append(f"Warning: failed to stop Tailscale ({res.stderr.strip()})")
+            self._tailscale_started_by_us = False
 
         if self._vpn_started_by_us:
             res = self.runner(["scutil", "--nc", "stop", self._vpn_started_by_us])
@@ -546,9 +835,18 @@ def restore_firewall_bypass(
             notes.append("Disconnected Cloudflare WARP")
 
     if data.get("tailscale_exit_set_by_us") and data.get("tailscale_cli"):
-        res = runner([str(data["tailscale_cli"]), "set", "--exit-node="])
+        prev_node = str(data.get("prev_tailscale_exit_node") or "")
+        res = runner([str(data["tailscale_cli"]), "set", f"--exit-node={prev_node}"])
         if res.returncode == 0:
-            notes.append("Cleared Tailscale exit-node routing")
+            if prev_node:
+                notes.append(f"Restored previous Tailscale exit-node ({prev_node})")
+            else:
+                notes.append("Cleared Tailscale exit-node routing")
+
+    if data.get("tailscale_started_by_us") and data.get("tailscale_cli"):
+        res = runner([str(data["tailscale_cli"]), "down"])
+        if res.returncode == 0:
+            notes.append("Stopped Tailscale (restored previous Stopped state)")
 
     if data.get("vpn_started_by_us"):
         vpn_name = str(data["vpn_started_by_us"])
