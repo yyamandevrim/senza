@@ -220,7 +220,7 @@ static void report_timer_cb(CFRunLoopTimerRef timer, void *info) {
 
     uint64_t t = now_ns();
     float dt_ms = (float)(t - g_last_tick_ns) / 1000000.0f;
-    if (dt_ms < 0.5f) dt_ms = 8.0f;
+    if (dt_ms < 0.5f) dt_ms = 4.0f;
     g_last_tick_ns = t;
 
     PsrPadState pad;
@@ -247,14 +247,14 @@ static void start_report_timer_if_ready(void) {
     g_timer = CFRunLoopTimerCreate(
         kCFAllocatorDefault,
         CFAbsoluteTimeGetCurrent() + 0.01,
-        0.008, /* 125 Hz DualSense USB polling */
+        0.004, /* 250 Hz native DualSense USB polling */
         0,
         0,
         report_timer_cb,
         &ctx
     );
     CFRunLoopAddTimer(rl, g_timer, kCFRunLoopCommonModes);
-    fprintf(stderr, "[senza-sony] Virtual USB DualSense 125Hz report stream active!\n");
+    fprintf(stderr, "[senza-sony] Virtual USB DualSense 250Hz report stream active!\n");
     fflush(stderr);
 }
 

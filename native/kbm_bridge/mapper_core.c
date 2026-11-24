@@ -155,6 +155,10 @@ void psr_mapper_reset_inputs(PsrMapper *m) {
     m->pending_dy = 0.0f;
     m->vel_x = 0.0f;
     m->vel_y = 0.0f;
+    m->filt_vx = 0.0f;
+    m->filt_vy = 0.0f;
+    m->since_motion_ms = 0.0f;
+    m->has_active_motion = false;
     m->cruise_active = false;
     m->rstick_sticky_active = false;
     m->rstick_sticky_manual = false;
@@ -621,6 +625,10 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
         m->pending_dy = 0.0f;
         m->vel_x = 0.0f;
         m->vel_y = 0.0f;
+        m->filt_vx = 0.0f;
+        m->filt_vy = 0.0f;
+        m->since_motion_ms = 0.0f;
+        m->has_active_motion = false;
 
         /* First 140ms: hold straight down (+Y) so GTA 6 latches the downward (R) prompt.
          * Then smoothly ping-pong across the bottom semi-circle arc (14 deg .. 166 deg). */
@@ -647,6 +655,10 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
         m->pending_dy = 0.0f;
         m->vel_x = 0.0f;
         m->vel_y = 0.0f;
+        m->filt_vx = 0.0f;
+        m->filt_vy = 0.0f;
+        m->since_motion_ms = 0.0f;
+        m->has_active_motion = false;
 
         /* Smooth 360-degree clockwise rotation (~3.0 rad/s, ~2.1s per full revolution) */
         m->circle_phase += dt_sec * 3.0f;
@@ -667,6 +679,10 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
             m->sticky_ry = 0.0f;
             m->vel_x = 0.0f;
             m->vel_y = 0.0f;
+            m->filt_vx = 0.0f;
+            m->filt_vy = 0.0f;
+            m->since_motion_ms = 0.0f;
+            m->has_active_motion = false;
         }
         m->rstick_sticky_manual = manual_sticky_held;
 
@@ -699,26 +715,79 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
             m->sticky_ry = 0.0f;
         }
 
-        float inst_vx = m->pending_dx / dt_sec;
-        float inst_vy = (m->cfg.invert_y ? -m->pending_dy : m->pending_dy) / dt_sec;
+        float dx = m->pending_dx;
+        float dy = m->cfg.invert_y ? -m->pending_dy : m->pending_dy;
         m->pending_dx = 0.0f;
         m->pending_dy = 0.0f;
 
-        float alpha = clampf(1.0f - m->cfg.smoothing, 0.05f, 1.0f);
-        if (fabsf(inst_vx) > 0.01f || fabsf(inst_vy) > 0.01f) {
-            m->vel_x = m->vel_x * (1.0f - alpha) + inst_vx * alpha;
-            m->vel_y = m->vel_y * (1.0f - alpha) + inst_vy * alpha;
+        bool got_motion = (fabsf(dx) > 0.0001f || fabsf(dy) > 0.0001f);
+        float smooth = clampf(m->cfg.smoothing, 0.0f, 0.90f);
+
+        if (got_motion) {
+            /* Measure true inter-event interval so 60Hz/90Hz/120Hz trackpad events running inside
+             * a 125Hz/250Hz HID timer produce flat, rate-invariant velocity with ZERO sawtooth aliasing. */
+            float eff_dt_ms = m->has_active_motion
+                ? clampf(m->since_motion_ms + dt_ms, dt_ms, 34.0f)
+                : clampf(dt_ms, 4.0f, 20.0f);
+            float eff_dt_sec = eff_dt_ms / 1000.0f;
+            float inst_vx = dx / eff_dt_sec;
+            float inst_vy = dy / eff_dt_sec;
+
+            if (!m->has_active_motion) {
+                /* Crisp startup from rest without sluggish ramp-in */
+                float start_mix = 0.72f;
+                m->vel_x = inst_vx * start_mix;
+                m->vel_y = inst_vy * start_mix;
+                m->filt_vx = m->vel_x;
+                m->filt_vy = m->vel_y;
+                m->has_active_motion = true;
+            } else {
+                float tau_ms = 8.0f + smooth * 36.0f;
+                float alpha = 1.0f - expf(-eff_dt_ms / tau_ms);
+                float alpha_x = (inst_vx * m->vel_x < 0.0f) ? fmaxf(alpha, 0.72f) : alpha;
+                float alpha_y = (inst_vy * m->vel_y < 0.0f) ? fmaxf(alpha, 0.72f) : alpha;
+                m->vel_x += (inst_vx - m->vel_x) * alpha_x;
+                m->vel_y += (inst_vy - m->vel_y) * alpha_y;
+            }
+            m->since_motion_ms = 0.0f;
         } else {
-            float half_life = m->cfg.decay_half_life_ms > 1.0f ? m->cfg.decay_half_life_ms : 18.0f;
-            float decay = powf(0.5f, dt_ms / half_life);
-            m->vel_x *= decay;
-            m->vel_y *= decay;
-            if (fabsf(m->vel_x) < 1.0f) m->vel_x = 0.0f;
-            if (fabsf(m->vel_y) < 1.0f) m->vel_y = 0.0f;
+            m->since_motion_ms += dt_ms;
+            /* Trackpad inter-event coast bridge: macOS trackpad packets can have ~16.7ms spacing
+             * between consecutive events. Holding velocity smoothly across the 22ms grace window
+             * eliminates 60Hz-vs-250Hz stutter completely, then decays crisply on finger lift. */
+            float coast_grace_ms = m->cfg.trackpad_mode ? 22.0f : 10.0f;
+            if (m->has_active_motion && m->since_motion_ms <= coast_grace_ms) {
+                float micro_bleed = powf(0.5f, dt_ms / 180.0f);
+                m->vel_x *= micro_bleed;
+                m->vel_y *= micro_bleed;
+            } else {
+                float raw_hl = m->cfg.decay_half_life_ms > 1.0f ? m->cfg.decay_half_life_ms : 18.0f;
+                float stop_hl = m->cfg.trackpad_mode ? fminf(raw_hl * 0.65f, 26.0f) : raw_hl;
+                if (stop_hl < 6.0f) stop_hl = 6.0f;
+                float decay = powf(0.5f, dt_ms / stop_hl);
+                m->vel_x *= decay;
+                m->vel_y *= decay;
+                if (fabsf(m->vel_x) < 2.0f && fabsf(m->vel_y) < 2.0f) {
+                    m->vel_x = 0.0f;
+                    m->vel_y = 0.0f;
+                    m->has_active_motion = false;
+                }
+            }
+        }
+
+        /* Second-stage critically damped velocity filter (dt-independent):
+         * Irons out 1-pixel quantization steps on slow pans while keeping <12ms phase lag. */
+        float stage2_tau_ms = 5.0f + smooth * 18.0f;
+        float stage2_alpha = 1.0f - expf(-dt_ms / stage2_tau_ms);
+        m->filt_vx += (m->vel_x - m->filt_vx) * stage2_alpha;
+        m->filt_vy += (m->vel_y - m->filt_vy) * stage2_alpha;
+        if (!m->has_active_motion && fabsf(m->filt_vx) < 2.0f && fabsf(m->filt_vy) < 2.0f) {
+            m->filt_vx = 0.0f;
+            m->filt_vy = 0.0f;
         }
 
         float max_v = m->cfg.max_velocity_px_per_sec > 100.0f ? m->cfg.max_velocity_px_per_sec : 2600.0f;
-        float aim_sens = sens;
+        float aim_sens = sens * (m->cfg.trackpad_mode ? 1.45f : 1.0f);
         if (!m->vehicle_mode && !m->aircraft_mode && next.l2 > 0) {
             aim_sens *= clampf(m->cfg.ads_sensitivity_scale, 0.1f, 2.0f);
             /* Precision Sniper Mode: holding L2 (CapsLock) + Z scales aim down further */
@@ -727,8 +796,8 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
             }
         }
 
-        float nx = (m->vel_x / max_v) * aim_sens;
-        float ny = (m->vel_y / max_v) * aim_sens;
+        float nx = (m->filt_vx / max_v) * aim_sens;
+        float ny = (m->filt_vy / max_v) * aim_sens;
         float speed = sqrtf(nx * nx + ny * ny);
 
         if (speed > 0.002f) {
@@ -741,7 +810,11 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
             float exponent = clampf(m->cfg.curve_exponent, 0.25f, 3.0f);
             float shaped = powf(clamped, exponent);
             float dz = clampf(m->cfg.deadzone, 0.0f, 0.45f);
-            float out_mag = dz + shaped * (1.0f - dz);
+            /* Soft deadzone shoulder prevents harsh 0->dz snap when barely grazing the trackpad,
+             * while clearing full GTA deadzone immediately on any intentional pan. */
+            float dz_blend = clampf((speed - 0.002f) / 0.018f, 0.0f, 1.0f);
+            float dz_smooth = dz_blend * dz_blend * (3.0f - 2.0f * dz_blend);
+            float out_mag = dz * dz_smooth + shaped * (1.0f - dz * dz_smooth);
             if (out_mag > 1.0f) out_mag = 1.0f;
             rx = (nx / speed) * out_mag;
             ry = (ny / speed) * out_mag;

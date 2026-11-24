@@ -125,6 +125,10 @@ typedef struct {
     float pending_dy;
     float vel_x;
     float vel_y;
+    float filt_vx;
+    float filt_vy;
+    float since_motion_ms;
+    bool has_active_motion;
 
     /* Smart Mode runtime state */
     bool rstick_sticky_active;

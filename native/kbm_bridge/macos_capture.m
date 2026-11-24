@@ -1079,6 +1079,16 @@ static void set_hud_visible_on_main(BOOL visible, bool capture_active, int mode_
     }
 }
 
+static void set_mouse_coalescing_safe(BOOL enabled) {
+    if ([NSThread isMainThread]) {
+        [NSEvent setMouseCoalescingEnabled:enabled];
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [NSEvent setMouseCoalescingEnabled:enabled];
+        });
+    }
+}
+
 static void apply_cursor_lock_locked(bool lock) {
     bool currently_locked = atomic_load(&g_cursor_locked);
     if (lock == currently_locked) return;
@@ -1086,9 +1096,11 @@ static void apply_cursor_lock_locked(bool lock) {
     if (lock) {
         CGAssociateMouseAndMouseCursorPosition(false);
         CGDisplayHideCursor(CGMainDisplayID());
+        set_mouse_coalescing_safe(NO);
         atomic_store(&g_cursor_locked, true);
         fprintf(stderr, "[senza] Capture ON  ('0'=Release, 'G'=Car, 'O'=Aircraft, 'T'=Smart, ';'=Ping, 'H'=HUD)\n");
     } else {
+        set_mouse_coalescing_safe(YES);
         CGAssociateMouseAndMouseCursorPosition(true);
         CGDisplayShowCursor(CGMainDisplayID());
         atomic_store(&g_cursor_locked, false);

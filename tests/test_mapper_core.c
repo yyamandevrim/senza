@@ -364,6 +364,36 @@ static void test_two_finger_scroll_touchpad_swipe_and_sniper_zoom(void) {
     assert(m.pad.buttons[PSR_BTN_DPAD_UP] == 0);
 }
 
+static void test_trackpad_smoothness_no_sawtooth(void) {
+    PsrMapper m;
+    psr_mapper_init(&m, NULL);
+    psr_mapper_set_capture(&m, true);
+
+    /* Simulate steady MacBook Trackpad pan: 60Hz NSEvents (dx=8px every 16ms)
+     * sampled inside a 250Hz HID timer (dt=4ms). Steady-state ripple must stay < 4%. */
+    int16_t min_rx = 32767;
+    int16_t max_rx = -32768;
+    for (int tick = 0; tick < 100; tick++) {
+        if ((tick % 4) == 0) {
+            psr_mapper_add_mouse_delta(&m, 8.0f, 0.0f);
+        }
+        psr_mapper_tick(&m, 4.0f);
+        if (tick >= 40) {
+            if (m.pad.rx < min_rx) min_rx = m.pad.rx;
+            if (m.pad.rx > max_rx) max_rx = m.pad.rx;
+        }
+    }
+    assert(min_rx > 10000);
+    float ripple_ratio = (float)(max_rx - min_rx) / (float)max_rx;
+    assert(ripple_ratio < 0.04f);
+
+    /* Finger lifts -> camera stops cleanly to 0 within 220ms */
+    for (int tick = 0; tick < 55; tick++) {
+        psr_mapper_tick(&m, 4.0f);
+    }
+    assert(m.pad.rx == 0 && m.pad.ry == 0);
+}
+
 int main(void) {
     test_wasd_diagonal_normalization();
     test_mouse_deadzone_and_ads_scaling();
@@ -374,6 +404,7 @@ int main(void) {
     test_aircraft_mode_controls();
     test_live_sensitivity_sniper_and_mic_mute();
     test_two_finger_scroll_touchpad_swipe_and_sniper_zoom();
+    test_trackpad_smoothness_no_sawtooth();
     printf("All mapper_core C tests passed!\n");
     return 0;
 }
