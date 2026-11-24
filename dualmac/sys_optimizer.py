@@ -191,23 +191,29 @@ class SystemOptimizer:
         return notes
 
     def boost_process(self, pid: int, label: str = "RemotePlay") -> list[str]:
-        """Raise scheduling priority of the launched Remote Play / chiaki-ng process."""
+        """Raise scheduling priority / P-core QoS of the launched Remote Play / chiaki-ng process."""
         notes: list[str] = []
-        nice_val = "-10" if self.privileged else "-5"
-        if self.privileged and not self.gui_sudo:
-            cmd = ["sudo", "renice", "-n", nice_val, "-p", str(pid)]
-        else:
-            cmd = ["renice", "-n", "-5", "-p", str(pid)]
+        policy_cmd = ["taskpolicy", "-B", "-p", str(pid)]
 
         if self.dry_run:
-            notes.append(f"[dry-run] {' '.join(cmd)}")
+            notes.append(f"[dry-run] {' '.join(policy_cmd)}")
+            if self.privileged and not self.gui_sudo:
+                notes.append(f"[dry-run] sudo renice -n -10 -p {pid}")
             return notes
 
-        res = self.runner(cmd)
-        if res.returncode == 0:
-            notes.append(f"Boosted {label} (pid {pid}) priority to nice {nice_val}")
-        else:
-            notes.append(f"Info: renice skipped ({res.stderr.strip() or 'requires --privileged'})")
+        pol_res = self.runner(policy_cmd)
+        if pol_res.returncode == 0:
+            notes.append(f"Boosted {label} (pid {pid}) to foreground Performance-core QoS (taskpolicy -B)")
+
+        # Negative nice values always require root on macOS; only apply when terminal sudo is already cached
+        # (skip under --gui-sudo to avoid popping up a second Touch ID / password dialog).
+        if self.privileged and not self.gui_sudo:
+            renice_cmd = ["sudo", "renice", "-n", "-10", "-p", str(pid)]
+            res = self.runner(renice_cmd)
+            if res.returncode == 0:
+                notes.append(f"Boosted {label} (pid {pid}) CPU priority to nice -10")
+            else:
+                notes.append(f"Info: renice skipped ({res.stderr.strip() or 'requires root'})")
         return notes
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
