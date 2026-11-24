@@ -79,6 +79,52 @@ static atomic_bool g_net_visible = false;
 static atomic_bool g_net_thread_active = false;
 static pthread_t g_net_thread;
 
+/* Auto-front tracker for newly opened RemotePlay / chiaki-ng windows */
+static NSHashTable<NSWindow *> *g_seen_windows = nil;
+static id g_window_close_observer = nil;
+static dispatch_source_t g_window_watch_timer = nil;
+
+static BOOL is_trackable_app_window(NSWindow *win) {
+    if (win == nil) return NO;
+    if ([win isKindOfClass:[NSPanel class]]) return NO;
+    if (!win.isVisible) return NO;
+    NSRect f = win.frame;
+    if (f.size.width < 200.0 || f.size.height < 150.0) return NO;
+    return YES;
+}
+
+static void bring_window_to_front_on_main(NSWindow *win) {
+    if (NSApp == nil) return;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [[NSRunningApplication currentApplication]
+        activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+    [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+    if (win != nil) {
+        [win makeKeyAndOrderFront:nil];
+        [win orderFrontRegardless];
+    }
+}
+
+static void check_new_windows_and_focus_on_main(void) {
+    if (NSApp == nil) return;
+    if (g_seen_windows == nil) {
+        g_seen_windows = [NSHashTable weakObjectsHashTable];
+    }
+    NSWindow *newest = nil;
+    for (NSWindow *win in [NSApp windows]) {
+        if (!is_trackable_app_window(win)) continue;
+        if (![g_seen_windows containsObject:win]) {
+            [g_seen_windows addObject:win];
+            newest = win;
+        }
+    }
+    if (newest != nil) {
+        bring_window_to_front_on_main(newest);
+    }
+}
+
 static int current_mode_id(bool vehicle_mode, bool aircraft_mode) {
     if (aircraft_mode) return 2;
     if (vehicle_mode) return 1;
@@ -974,6 +1020,36 @@ static void install_cocoa_monitors_on_main(void) {
             atomic_store(&g_app_active, true);
         }];
 
+        g_window_close_observer = [nc addObserverForName:NSWindowWillCloseNotification
+                                                  object:nil
+                                                   queue:nil
+                                              usingBlock:^(NSNotification *note) {
+            if (g_seen_windows != nil && [note.object isKindOfClass:[NSWindow class]]) {
+                [g_seen_windows removeObject:(NSWindow *)note.object];
+            }
+        }];
+
+        /* Bring newly launched app & any newly opened Remote Play stream window to the front */
+        bring_window_to_front_on_main(nil);
+        check_new_windows_and_focus_on_main();
+        if (g_window_watch_timer == nil) {
+            g_window_watch_timer = dispatch_source_create(
+                DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue()
+            );
+            dispatch_source_set_timer(
+                g_window_watch_timer,
+                dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)),
+                (uint64_t)(250 * NSEC_PER_MSEC),
+                (uint64_t)(50 * NSEC_PER_MSEC)
+            );
+            dispatch_source_set_event_handler(g_window_watch_timer, ^{
+                @autoreleasepool {
+                    check_new_windows_and_focus_on_main();
+                }
+            });
+            dispatch_resume(g_window_watch_timer);
+        }
+
         fprintf(stderr, "[dualmac] Ready (GTA 6 Smart Pack)! '0'=Toggle, 'G'=Car, 'O'=Aircraft, 'T'=Smart, ';'=Ping, 'H'=HUD.\n");
         fflush(stderr);
     }
@@ -1020,6 +1096,10 @@ void psr_capture_stop(void) {
     dispatch_block_t teardown = ^{
         @autoreleasepool {
             ++g_toast_gen;
+            if (g_window_watch_timer != nil) {
+                dispatch_source_cancel(g_window_watch_timer);
+                g_window_watch_timer = nil;
+            }
             if (g_toast_panel != nil) {
                 [g_toast_panel orderOut:nil];
                 g_toast_panel = nil;
@@ -1055,6 +1135,11 @@ void psr_capture_stop(void) {
                 [nc removeObserver:g_become_observer];
                 g_become_observer = nil;
             }
+            if (g_window_close_observer != nil) {
+                [nc removeObserver:g_window_close_observer];
+                g_window_close_observer = nil;
+            }
+            g_seen_windows = nil;
         }
     };
 
