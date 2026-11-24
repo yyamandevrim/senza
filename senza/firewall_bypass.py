@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import plistlib
 import re
 import shlex
 import shutil
@@ -12,15 +13,26 @@ import socket
 import ssl
 import subprocess
 import time
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 STATE_DIR = Path.home() / ".local" / "share" / "senza"
 BYPASS_STATE_FILE = STATE_DIR / "bypass_state.json"
+SYSTEM_TUNNEL_STATE_FILE = STATE_DIR / "system_tunnel.json"
+TUNNEL_WATCHDOG_LOG = STATE_DIR / "tunnel_watchdog.log"
+
+LAUNCH_AGENT_LABEL = "com.senza.fortigate-tailscale"
+LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 
 CLEAN_DNS_SERVERS: tuple[str, ...] = ("1.1.1.1", "1.0.0.1")
 DEFAULT_TAILSCALE_EXIT_NODE: str = "100.123.154.74"
+TAILSCALE_DERP_PROBE_HOSTS: tuple[str, ...] = (
+    "derp9.tailscale.com",
+    "derp1.tailscale.com",
+    "derp12.tailscale.com",
+)
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
@@ -268,8 +280,62 @@ class FirewallProbeReport:
     tailscale_exit_node_ready: bool = False
     tailscale_exit_node_status: str = ""
     tailscale_available_exit_nodes: list[str] = field(default_factory=list)
+    tailscale_controlplane_ok: bool = False
+    tailscale_derp_ok: bool = False
+    tailscale_derp_nodes: list[str] = field(default_factory=list)
+    fortigate_warp_bootstrap_needed: bool = False
     macos_vpns: list[str] = field(default_factory=list)
     diagnosis: str = "unknown"
+
+
+def probe_tailscale_controlplane(timeout: float = 3.0) -> tuple[bool, str]:
+    """Verify real HTTPS access to controlplane.tailscale.com (detects FortiGate DNS/SNI/DPI blocks)."""
+    url = "https://controlplane.tailscale.com/key?v=109"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Senza-Probe/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read(512).decode("utf-8", "replace")
+            if resp.status == 200 and ("publicKey" in body or "legacyPublicKey" in body):
+                return True, "ok (HTTP 200)"
+            return False, f"unexpected response (status={resp.status}, possible firewall block page)"
+    except Exception as exc:
+        return False, f"blocked ({type(exc).__name__}: {exc})"
+
+
+def probe_tailscale_derp(timeout: float = 2.5) -> tuple[bool, list[str]]:
+    """Check whether Tailscale DERP TLS/TCP-443 relays are reachable (bypasses FortiGate UDP/WireGuard DPI)."""
+    reachable: list[str] = []
+    for host in TAILSCALE_DERP_PROBE_HOSTS:
+        try:
+            req = urllib.request.Request(f"https://{host}/", headers={"User-Agent": "Senza-Probe/1.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    reachable.append(host.split(".", 1)[0])
+        except Exception:
+            continue
+    return bool(reachable), reachable
+
+
+def probe_egress_via_tunnel(timeout: float = 4.0) -> tuple[bool, str]:
+    """Verify real HTTPS egress through the active tunnel and extract the external IP if available."""
+    try:
+        req = urllib.request.Request("https://1.1.1.1/cdn-cgi/trace", headers={"User-Agent": "Senza-Probe/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read(1024).decode("utf-8", "replace")
+            if resp.status == 200:
+                m = re.search(r"^ip=(\S+)$", body, re.MULTILINE)
+                loc = re.search(r"^loc=(\S+)$", body, re.MULTILINE)
+                if m:
+                    loc_tag = f" ({loc.group(1)})" if loc else ""
+                    return True, f"egress IP {m.group(1)}{loc_tag}"
+                return True, "HTTPS egress verified"
+    except Exception:
+        pass
+
+    # Fallback check directly to PSN TLS if 1.1.1.1 trace is unreachable
+    if _tls_check_ip("m.np.playstation.com", "m.np.playstation.com", timeout=timeout):
+        return True, "PSN TLS reachable"
+    return False, "egress check failed (firewall may be blocking tunnel traffic)"
 
 
 def _tls_check_ip(ip: str, hostname: str, timeout: float = 2.5) -> bool:
@@ -315,7 +381,7 @@ def probe_psn_firewall(
     runner: Runner = _default_runner,
     exit_node: str | None = None,
 ) -> FirewallProbeReport:
-    """Detect whether the current network blocks PSN via DNS/TLS or blocks outbound UDP gaming ports."""
+    """Detect whether the current network blocks PSN, outbound UDP, or Tailscale controlplane/DERP (FortiGate)."""
     target_exit = (exit_node or os.environ.get("SENZA_EXIT_NODE") or DEFAULT_TAILSCALE_EXIT_NODE).strip()
     rep = FirewallProbeReport(tailscale_exit_node=target_exit)
     rep.warp_available = find_warp_cli() is not None
@@ -328,6 +394,12 @@ def probe_psn_firewall(
         rep.tailscale_exit_node_ready = bool(ts_info["ready"])
         rep.tailscale_exit_node_status = str(ts_info["status_text"])
         rep.tailscale_available_exit_nodes = list(ts_info["available_exit_nodes"])
+        cp_ok, _ = probe_tailscale_controlplane(timeout=2.5)
+        rep.tailscale_controlplane_ok = cp_ok
+        derp_ok, derp_nodes = probe_tailscale_derp(timeout=2.0)
+        rep.tailscale_derp_ok = derp_ok
+        rep.tailscale_derp_nodes = derp_nodes
+        rep.fortigate_warp_bootstrap_needed = not cp_ok
     rep.macos_vpns = list_macos_vpns(runner)
 
     psn_host = "m.np.playstation.com"
@@ -342,8 +414,13 @@ def probe_psn_firewall(
     rep.udp_high_port_ok = _stun_check("stun.l.google.com", 19302)
     rep.udp_3478_ok = _stun_check("stun.cloudflare.com", 3478)
 
-    if not rep.psn_sys_tls_ok and rep.psn_cf_tls_ok and not rep.udp_high_port_ok:
-        rep.diagnosis = "DNS/CDN PSN block + Outbound UDP firewall (use --bypass-firewall tailscale or warp)"
+    if rep.tailscale_available and not rep.tailscale_controlplane_ok:
+        rep.diagnosis = (
+            "FortiGate/DPI blocking controlplane.tailscale.com "
+            "(auto WARP-bootstrap -> Tailscale exit-node ready)"
+        )
+    elif not rep.psn_sys_tls_ok and rep.psn_cf_tls_ok and not rep.udp_high_port_ok:
+        rep.diagnosis = "DNS/CDN PSN block + Outbound UDP firewall (use --bypass-firewall tailscale or `senza tunnel on`)"
     elif not rep.psn_sys_tls_ok and rep.psn_cf_tls_ok:
         rep.diagnosis = "DNS/CDN PSN block (fixed immediately by --bypass-firewall dns or tailscale)"
     elif not rep.psn_sys_tls_ok and not rep.psn_cf_tls_ok:
@@ -367,6 +444,9 @@ class FirewallBypass:
         dry_run: bool = False,
         runner: Runner = _default_runner,
         state_file: Path = BYPASS_STATE_FILE,
+        warp_bootstrap: str = "auto",
+        fallback_warp: bool = False,
+        persistent: bool = False,
     ) -> None:
         self.mode = mode.strip()
         self.exit_node = exit_node.strip() if exit_node and exit_node.strip() else None
@@ -374,6 +454,9 @@ class FirewallBypass:
         self.dry_run = dry_run
         self.runner = runner
         self.state_file = state_file
+        self.warp_bootstrap = warp_bootstrap.strip().lower() if warp_bootstrap else "auto"
+        self.fallback_warp = fallback_warp
+        self.persistent = persistent
 
         self._active = False
         self._dns_service: str | None = None
@@ -382,6 +465,7 @@ class FirewallBypass:
         self._warp_cli: str | None = None
         self._tailscale_started_by_us = False
         self._tailscale_exit_set_by_us = False
+        self._tailscale_exit_active = False
         self._prev_tailscale_exit_node: str | None = None
         self._tailscale_cli: str | None = None
         self._vpn_started_by_us: str | None = None
@@ -509,6 +593,95 @@ class FirewallBypass:
             notes.append("Warning: Cloudflare WARP still finalizing connection after 15s (check `warp-cli status`)")
         return notes
 
+    def _is_warp_connected(self, warp_cli: str) -> bool:
+        st = self.runner([warp_cli, "status"])
+        return "Status update: Connected" in st.stdout or (
+            "Connected" in st.stdout and "Connecting" not in st.stdout and "Disconnected" not in st.stdout
+        )
+
+    def _warp_bootstrap_tailscale_up(self, ts: str) -> tuple[dict[str, Any] | None, list[str]]:
+        """FortiGate bypass: briefly turn WARP ON -> `tailscale up` (controlplane/netmap) -> WARP OFF."""
+        notes: list[str] = []
+        warp = find_warp_cli()
+        if not warp:
+            notes.append(
+                "Warning: controlplane.tailscale.com appears blocked by FortiGate/DPI, and Cloudflare WARP "
+                "is not installed for bootstrap (`brew install --cask cloudflare-warp`)."
+            )
+            return None, notes
+
+        warp_was_connected = self._is_warp_connected(warp)
+        temp_warp_connected = False
+
+        try:
+            if not warp_was_connected:
+                status_res = self.runner([warp, "status"])
+                if "Registration Missing" in status_res.stdout or "Missing" in status_res.stderr:
+                    self.runner([warp, "--accept-tos", "registration", "new"])
+
+                settings_res = self.runner([warp, "settings"])
+                if not re.search(r"Mode:\s*Warp\b", settings_res.stdout):
+                    self.runner([warp, "mode", "warp"])
+
+                conn_res = self.runner([warp, "connect"])
+                if conn_res.returncode != 0:
+                    notes.append(
+                        f"Warning: WARP bootstrap connect failed ({conn_res.stderr.strip() or conn_res.stdout.strip()})"
+                    )
+                    return None, notes
+
+                connected = False
+                for _ in range(30):
+                    time.sleep(0.5)
+                    if self._is_warp_connected(warp):
+                        connected = True
+                        break
+
+                if not connected:
+                    notes.append("Warning: WARP bootstrap did not reach Connected state within 15s")
+                    self.runner([warp, "disconnect"])
+                    return None, notes
+
+                temp_warp_connected = True
+                notes.append("FortiGate bootstrap: Cloudflare WARP MASQUE connected temporarily")
+
+            up_res = self.runner([ts, "up"])
+            if up_res.returncode != 0:
+                notes.append(
+                    f"Warning: `tailscale up` via WARP failed ({up_res.stderr.strip() or up_res.stdout.strip()})"
+                )
+                return None, notes
+
+            self._tailscale_started_by_us = True
+            self._tailscale_cli = ts
+            self._write_state()
+
+            data: dict[str, Any] | None = None
+            for _ in range(24):
+                data = _tailscale_status_json(ts, self.runner)
+                cur_state = str(data.get("BackendState") or "") if data else ""
+                if cur_state == "Running" and (data and data.get("Peer")):
+                    break
+                if cur_state == "NeedsLogin":
+                    notes.append("Warning: Tailscale requires sign-in — open Tailscale.app and log in first.")
+                    return data, notes
+                time.sleep(0.5)
+
+            if data and str(data.get("BackendState") or "") == "Running":
+                notes.append("FortiGate bootstrap: Tailscale controlplane handshake & netmap sync succeeded")
+            else:
+                notes.append("Warning: Tailscale did not reach Running state during WARP bootstrap")
+        finally:
+            if temp_warp_connected:
+                self.runner([warp, "disconnect"])
+                for _ in range(12):
+                    time.sleep(0.5)
+                    if not self._is_warp_connected(warp):
+                        break
+                notes.append("FortiGate bootstrap: Cloudflare WARP disconnected (handing default route to Tailscale)")
+
+        return _tailscale_status_json(ts, self.runner), notes
+
     @staticmethod
     def _parse_tailscale_ping(stdout: str) -> str | None:
         for raw_line in stdout.splitlines():
@@ -542,7 +715,17 @@ class FirewallBypass:
             data = _tailscale_status_json(ts, self.runner)
             state = str(data.get("BackendState") or "NotRunning") if data else "NotRunning"
             if state != "Running":
-                notes.append(f"[dry-run] {ts} up  (current Tailscale state: {state})")
+                need_boot = self.warp_bootstrap == "always"
+                if self.warp_bootstrap == "auto":
+                    cp_ok, _ = probe_tailscale_controlplane(timeout=2.0)
+                    need_boot = not cp_ok
+                if need_boot:
+                    warp = find_warp_cli() or "warp-cli"
+                    notes.append(
+                        f"[dry-run] FortiGate WARP bootstrap: {warp} connect -> {ts} up -> {warp} disconnect"
+                    )
+                else:
+                    notes.append(f"[dry-run] {ts} up  (current Tailscale state: {state})")
             notes.append(f"[dry-run] {ts} set --exit-node={target_node} --exit-node-allow-lan-access=true")
             notes.append(f"[dry-run] {ts} ping -c 1 --timeout=3s {target_node}")
             return notes
@@ -568,30 +751,49 @@ class FirewallBypass:
             return notes
 
         if state != "Running":
-            if state == "Stopped":
-                up_res = self.runner([ts, "up"])
-                if up_res.returncode != 0:
-                    notes.append(
-                        f"Warning: `tailscale up` failed ({up_res.stderr.strip() or up_res.stdout.strip()})"
-                    )
-                    return notes
-                self._tailscale_started_by_us = True
-                self._tailscale_cli = ts
-                self._write_state()
-                notes.append("Started Tailscale network (was Stopped)")
+            use_bootstrap = self.warp_bootstrap == "always"
+            if self.warp_bootstrap == "auto":
+                cp_ok, cp_detail = probe_tailscale_controlplane(timeout=2.5)
+                if not cp_ok:
+                    use_bootstrap = True
+                    notes.append(f"controlplane.tailscale.com blocked ({cp_detail}) — engaging FortiGate WARP bootstrap")
 
-            for _ in range(24):
-                data = _tailscale_status_json(ts, self.runner)
-                cur_state = str(data.get("BackendState") or "") if data else ""
-                if cur_state == "Running":
-                    break
-                if cur_state == "NeedsLogin":
-                    notes.append("Warning: Tailscale requires sign-in — open Tailscale.app and log in first.")
-                    return notes
-                time.sleep(0.5)
+            if use_bootstrap:
+                data, boot_notes = self._warp_bootstrap_tailscale_up(ts)
+                notes.extend(boot_notes)
+            else:
+                if state == "Stopped":
+                    up_res = self.runner([ts, "up"])
+                    if up_res.returncode != 0:
+                        notes.append(
+                            f"Warning: `tailscale up` failed ({up_res.stderr.strip() or up_res.stdout.strip()})"
+                        )
+                        return notes
+                    self._tailscale_started_by_us = True
+                    self._tailscale_cli = ts
+                    self._write_state()
+                    notes.append("Started Tailscale network (was Stopped)")
+
+                for _ in range(12):
+                    data = _tailscale_status_json(ts, self.runner)
+                    cur_state = str(data.get("BackendState") or "") if data else ""
+                    if cur_state == "Running":
+                        break
+                    if cur_state == "NeedsLogin":
+                        notes.append("Warning: Tailscale requires sign-in — open Tailscale.app and log in first.")
+                        return notes
+                    time.sleep(0.5)
+
+                if (not data or str(data.get("BackendState") or "") != "Running") and self.warp_bootstrap == "auto" and find_warp_cli():
+                    notes.append("Direct `tailscale up` stalled (possible FortiGate DPI) — retrying via WARP bootstrap")
+                    data, boot_notes = self._warp_bootstrap_tailscale_up(ts)
+                    notes.extend(boot_notes)
 
             if not data or str(data.get("BackendState") or "") != "Running":
-                notes.append("Warning: Tailscale did not reach Running state within 12s (check Tailscale.app).")
+                notes.append("Warning: Tailscale did not reach Running state (check Tailscale.app).")
+                if self.fallback_warp:
+                    notes.append("Fallback enabled — switching to Cloudflare WARP MASQUE (TCP 443) tunnel")
+                    notes.extend(self._connect_warp())
                 return notes
 
         self._prev_tailscale_exit_node = _tailscale_active_exit_node(data)
@@ -617,6 +819,9 @@ class FirewallBypass:
             if avail:
                 msg += f" Available exit nodes: {', '.join(avail)}"
             notes.append(msg)
+            if self.fallback_warp:
+                notes.append("Fallback enabled — activating Cloudflare WARP MASQUE (TCP 443) until exit node arrives")
+                notes.extend(self._connect_warp())
             return notes
 
         peer_name = str(peer.get("HostName") or str(peer.get("DNSName") or "").rstrip(".") or target_node)
@@ -625,9 +830,13 @@ class FirewallBypass:
                 f"Warning: {target_node} ({peer_name}) is visible in tailnet, "
                 "but Exit Node permission is not enabled on it yet."
             )
+            if self.fallback_warp:
+                notes.extend(self._connect_warp())
             return notes
         if not peer.get("Online"):
             notes.append(f"Warning: Tailscale exit node {target_node} ({peer_name}) is currently OFFLINE.")
+            if self.fallback_warp:
+                notes.extend(self._connect_warp())
             return notes
 
         peer_ips = {str(ip).strip().lower() for ip in (peer.get("TailscaleIPs") or [])}
@@ -656,12 +865,31 @@ class FirewallBypass:
 
         ping_res = self.runner([ts, "ping", "-c", "1", "--timeout=3s", target_node])
         path_info = self._parse_tailscale_ping(ping_res.stdout) if ping_res.returncode == 0 else None
+        egress_ok, egress_info = probe_egress_via_tunnel(timeout=4.0)
 
         prefix = "Tailscale Exit Node already active" if already_using_target else "Tailscale Exit Node ACTIVE"
+        parts = [f"{prefix}: {target_node} ({peer_name})"]
         if path_info:
-            notes.append(f"{prefix}: {target_node} ({peer_name}) · {path_info}")
+            parts.append(path_info)
+        if egress_ok:
+            parts.append(egress_info)
+        notes.append(" · ".join(parts))
+
+        if egress_ok:
+            self._tailscale_exit_active = True
         else:
-            notes.append(f"{prefix}: {target_node} ({peer_name}) — LAN access kept, firewall bypassed")
+            notes.append(
+                "Warning: Exit node connected, but live HTTPS egress check failed "
+                "(FortiGate may be blocking both WireGuard UDP and this DERP relay)."
+            )
+            if self.fallback_warp:
+                if self._tailscale_exit_set_by_us:
+                    self.runner([ts, "set", f"--exit-node={self._prev_tailscale_exit_node or ''}"])
+                    self._tailscale_exit_set_by_us = False
+                notes.append("Fallback enabled — switching to Cloudflare WARP MASQUE (HTTP/2 TCP-443)")
+                notes.extend(self._connect_warp())
+            else:
+                self._tailscale_exit_active = True
         return notes
 
     def _connect_macos_vpn(self, vpn_name: str) -> list[str]:
@@ -740,7 +968,7 @@ class FirewallBypass:
                             f"or enable Tailscale Exit Node (`--bypass-firewall tailscale --exit-node {DEFAULT_TAILSCALE_EXIT_NODE}`)."
                         )
 
-        if not self.dry_run:
+        if not self.dry_run and not self.persistent:
             atexit.register(self.exit)
         return notes
 
@@ -874,4 +1102,305 @@ def restore_firewall_bypass(
         state_file.unlink()
     except OSError:
         pass
+    return notes
+
+
+def _resolve_senza_cli_path() -> str:
+    local_bin = Path.home() / ".local" / "bin" / "senza"
+    if local_bin.exists():
+        return str(local_bin)
+    found = shutil.which("senza")
+    if found:
+        return found
+    repo_bin = Path(__file__).resolve().parent.parent / "bin" / "senza"
+    return str(repo_bin)
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _warp_is_connected(runner: Runner = _default_runner) -> bool:
+    warp = find_warp_cli()
+    if not warp:
+        return False
+    st = runner([warp, "status"])
+    return "Status update: Connected" in st.stdout or (
+        "Connected" in st.stdout and "Connecting" not in st.stdout and "Disconnected" not in st.stdout
+    )
+
+
+def system_tunnel_status(
+    exit_node: str | None = None,
+    runner: Runner = _default_runner,
+    state_file: Path = SYSTEM_TUNNEL_STATE_FILE,
+    plist_path: Path = LAUNCH_AGENT_PATH,
+    probe_network_checks: bool = False,
+) -> dict[str, Any]:
+    """Inspect current system-wide FortiGate/Tailscale bypass tunnel & LaunchAgent status."""
+    saved = _read_json_file(state_file)
+    target = (
+        (exit_node or "").strip()
+        or str(saved.get("target_exit_node") or "").strip()
+        or (os.environ.get("SENZA_EXIT_NODE") or "").strip()
+        or DEFAULT_TAILSCALE_EXIT_NODE
+    )
+
+    ts_cli = find_tailscale_cli(runner)
+    ts_info = inspect_tailscale_exit_node(ts_cli, target=target, runner=runner) if ts_cli else {
+        "backend_state": "NotInstalled",
+        "ready": False,
+        "active_exit_node": None,
+        "available_exit_nodes": [],
+        "status_text": "Tailscale CLI not installed",
+    }
+    warp_connected = _warp_is_connected(runner)
+
+    active_exit = ts_info.get("active_exit_node")
+    ts_running = ts_info.get("backend_state") == "Running"
+    if ts_running and active_exit:
+        active_backend = "tailscale"
+    elif warp_connected:
+        active_backend = "warp"
+    else:
+        active_backend = "none"
+
+    result: dict[str, Any] = {
+        "managed": state_file.exists(),
+        "active": active_backend != "none",
+        "active_backend": active_backend,
+        "target_exit_node": target,
+        "tailscale_state": ts_info.get("backend_state"),
+        "tailscale_active_exit_node": active_exit,
+        "tailscale_exit_node_ready": bool(ts_info.get("ready")),
+        "tailscale_exit_node_status": str(ts_info.get("status_text") or ""),
+        "warp_connected": warp_connected,
+        "service_installed": plist_path.exists(),
+        "service_label": LAUNCH_AGENT_LABEL,
+        "service_plist": str(plist_path),
+    }
+
+    if probe_network_checks:
+        cp_ok, cp_detail = probe_tailscale_controlplane(timeout=2.5)
+        derp_ok, derp_nodes = probe_tailscale_derp(timeout=2.0)
+        result["controlplane_ok"] = cp_ok
+        result["controlplane_detail"] = cp_detail
+        result["derp_ok"] = derp_ok
+        result["derp_nodes"] = derp_nodes
+
+    return result
+
+
+def system_tunnel_up(
+    exit_node: str | None = None,
+    warp_bootstrap: str = "auto",
+    fallback_warp: bool = True,
+    dry_run: bool = False,
+    runner: Runner = _default_runner,
+    state_file: Path = SYSTEM_TUNNEL_STATE_FILE,
+) -> list[str]:
+    """Activate persistent system-wide Tailscale exit-node bypass (with FortiGate WARP bootstrap & fallback)."""
+    prev_saved = _read_json_file(state_file)
+    target = (
+        (exit_node or "").strip()
+        or str(prev_saved.get("target_exit_node") or "").strip()
+        or (os.environ.get("SENZA_EXIT_NODE") or "").strip()
+        or DEFAULT_TAILSCALE_EXIT_NODE
+    )
+
+    fb = FirewallBypass(
+        mode="tailscale",
+        exit_node=target,
+        dry_run=dry_run,
+        runner=runner,
+        state_file=state_file,
+        warp_bootstrap=warp_bootstrap,
+        fallback_warp=fallback_warp,
+        persistent=True,
+    )
+    notes = fb.enter()
+
+    if dry_run:
+        return notes
+
+    # If Tailscale exit-node became active while a previous WARP fallback was still up, disconnect WARP now
+    # so macOS routes cleanly through the Tailscale exit node instead of double-tunneling.
+    if fb._tailscale_exit_active and not fb._warp_connected_by_us and _warp_is_connected(runner):
+        warp = find_warp_cli()
+        if warp:
+            res = runner([warp, "disconnect"])
+            if res.returncode == 0:
+                notes.append("Disconnected previous WARP fallback (Tailscale exit-node is now primary)")
+
+    active_backend = (
+        "tailscale"
+        if fb._tailscale_exit_active
+        else ("warp" if fb._warp_connected_by_us else "none")
+    )
+
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    merged = {
+        "persistent": True,
+        "target_exit_node": target,
+        "active_backend": active_backend,
+        "warp_bootstrap": warp_bootstrap,
+        "fallback_warp": fallback_warp,
+        "dns_service": fb._dns_service or prev_saved.get("dns_service"),
+        "prev_dns": fb._prev_dns if fb._dns_service else prev_saved.get("prev_dns"),
+        "warp_connected_by_us": bool(fb._warp_connected_by_us or (active_backend == "warp" and prev_saved.get("warp_connected_by_us"))),
+        "warp_cli": fb._warp_cli or prev_saved.get("warp_cli"),
+        "tailscale_started_by_us": bool(fb._tailscale_started_by_us or prev_saved.get("tailscale_started_by_us")),
+        "tailscale_exit_set_by_us": bool(fb._tailscale_exit_set_by_us or prev_saved.get("tailscale_exit_set_by_us")),
+        "prev_tailscale_exit_node": (
+            prev_saved.get("prev_tailscale_exit_node")
+            if "prev_tailscale_exit_node" in prev_saved
+            else fb._prev_tailscale_exit_node
+        ),
+        "tailscale_cli": fb._tailscale_cli or prev_saved.get("tailscale_cli"),
+        "vpn_started_by_us": fb._vpn_started_by_us or prev_saved.get("vpn_started_by_us"),
+    }
+    state_file.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+    return notes
+
+
+def system_tunnel_down(
+    runner: Runner = _default_runner,
+    state_file: Path = SYSTEM_TUNNEL_STATE_FILE,
+) -> list[str]:
+    """Tear down persistent system-wide bypass tunnel and restore prior Tailscale/WARP state."""
+    if state_file.exists():
+        notes = restore_firewall_bypass(gui_sudo=False, runner=runner, state_file=state_file)
+        if not notes:
+            notes.append("System tunnel state cleared (already inactive)")
+        return notes
+
+    notes: list[str] = []
+    ts_cli = find_tailscale_cli(runner)
+    if ts_cli:
+        data = _tailscale_status_json(ts_cli, runner)
+        if data and _tailscale_active_exit_node(data):
+            res = runner([ts_cli, "set", "--exit-node="])
+            if res.returncode == 0:
+                notes.append("Cleared Tailscale exit-node routing")
+
+    if _warp_is_connected(runner):
+        warp = find_warp_cli()
+        if warp:
+            res = runner([warp, "disconnect"])
+            if res.returncode == 0:
+                notes.append("Disconnected Cloudflare WARP")
+
+    if not notes:
+        notes.append("System tunnel is already off")
+    return notes
+
+
+def system_tunnel_ensure(
+    exit_node: str | None = None,
+    warp_bootstrap: str = "auto",
+    fallback_warp: bool = True,
+    runner: Runner = _default_runner,
+    state_file: Path = SYSTEM_TUNNEL_STATE_FILE,
+) -> list[str]:
+    """Idempotent health-check & auto-heal (designed for the macOS LaunchAgent watchdog)."""
+    saved = _read_json_file(state_file)
+    target = (
+        (exit_node or "").strip()
+        or str(saved.get("target_exit_node") or "").strip()
+        or (os.environ.get("SENZA_EXIT_NODE") or "").strip()
+        or DEFAULT_TAILSCALE_EXIT_NODE
+    )
+
+    ts_cli = find_tailscale_cli(runner)
+    if ts_cli:
+        data = _tailscale_status_json(ts_cli, runner)
+        if data and str(data.get("BackendState") or "") == "Running":
+            active = _tailscale_active_exit_node(data)
+            ex_st = data.get("ExitNodeStatus")
+            ex_online = isinstance(ex_st, dict) and bool(ex_st.get("Online"))
+            peer = _tailscale_find_peer(data, target)
+            peer_ips = {str(ip).strip().lower() for ip in (peer.get("TailscaleIPs") or [])} if peer else set()
+            if active and ex_online and (active.lower() == target.lower() or active.lower() in peer_ips):
+                return [f"OK: Tailscale exit node {target} already online & healthy"]
+
+    return system_tunnel_up(
+        exit_node=target,
+        warp_bootstrap=warp_bootstrap,
+        fallback_warp=fallback_warp,
+        dry_run=False,
+        runner=runner,
+        state_file=state_file,
+    )
+
+
+def install_tunnel_launch_agent(
+    exit_node: str | None = None,
+    fallback_warp: bool = True,
+    runner: Runner = _default_runner,
+    plist_path: Path = LAUNCH_AGENT_PATH,
+    cli_path: str | None = None,
+) -> list[str]:
+    """Install a macOS LaunchAgent that keeps the FortiGate -> Tailscale exit-node bypass alive system-wide."""
+    target = (exit_node or os.environ.get("SENZA_EXIT_NODE") or DEFAULT_TAILSCALE_EXIT_NODE).strip()
+    senza_cli = cli_path or _resolve_senza_cli_path()
+
+    prog_args = [senza_cli, "tunnel", "ensure", "--exit-node", target]
+    if not fallback_warp:
+        prog_args.append("--no-fallback-warp")
+
+    TUNNEL_WATCHDOG_LOG.parent.mkdir(parents=True, exist_ok=True)
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plist_data: dict[str, Any] = {
+        "Label": LAUNCH_AGENT_LABEL,
+        "ProgramArguments": prog_args,
+        "RunAtLoad": True,
+        "StartInterval": 45,
+        "StandardOutPath": str(TUNNEL_WATCHDOG_LOG),
+        "StandardErrorPath": str(TUNNEL_WATCHDOG_LOG),
+        "EnvironmentVariables": {
+            "PATH": f"{Path.home()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "PYTHONUNBUFFERED": "1",
+        },
+    }
+    plist_path.write_bytes(plistlib.dumps(plist_data))
+
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+    runner(["launchctl", "bootout", domain, str(plist_path)])
+    res = runner(["launchctl", "bootstrap", domain, str(plist_path)])
+
+    notes = [f"Installed macOS LaunchAgent: {plist_path} (target={target}, interval=45s)"]
+    if res.returncode == 0:
+        notes.append(f"LaunchAgent '{LAUNCH_AGENT_LABEL}' loaded and active")
+    else:
+        notes.append(
+            f"Warning: launchctl bootstrap returned {res.returncode} ({res.stderr.strip() or res.stdout.strip()})"
+        )
+    return notes
+
+
+def uninstall_tunnel_launch_agent(
+    runner: Runner = _default_runner,
+    plist_path: Path = LAUNCH_AGENT_PATH,
+) -> list[str]:
+    """Unload and remove the system-wide FortiGate Tailscale LaunchAgent."""
+    notes: list[str] = []
+    uid = os.getuid()
+    domain = f"gui/{uid}"
+    if plist_path.exists():
+        runner(["launchctl", "bootout", domain, str(plist_path)])
+        try:
+            plist_path.unlink()
+            notes.append(f"Removed LaunchAgent: {plist_path}")
+        except OSError as exc:
+            notes.append(f"Warning: could not remove {plist_path} ({exc})")
+    else:
+        notes.append("System tunnel LaunchAgent is not installed")
     return notes

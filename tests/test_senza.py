@@ -220,6 +220,8 @@ class TestSenza(unittest.TestCase):
             state_file = Path(tmp) / "bypass_state.json"
             with (
                 patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=[ts_bin]),
+                patch("senza.firewall_bypass.probe_tailscale_controlplane", return_value=(True, "ok")),
+                patch("senza.firewall_bypass.probe_egress_via_tunnel", return_value=(True, "egress IP 203.0.113.5")),
                 patch("senza.firewall_bypass.time.sleep", return_value=None),
             ):
                 fb = FirewallBypass(mode="tailscale", dry_run=False, runner=fake_runner, state_file=state_file)
@@ -311,6 +313,139 @@ class TestSenza(unittest.TestCase):
         info = inspect_tailscale_exit_node(live_cli, target="100.123.154.74", runner=fake_runner)
         self.assertTrue(info["ready"])
         self.assertIn("ONLINE & READY", str(info["status_text"]))
+
+    def test_fortigate_warp_bootstrap_and_system_tunnel_lifecycle(self) -> None:
+        import json
+        import plistlib
+        from unittest.mock import patch
+        from senza.firewall_bypass import (
+            install_tunnel_launch_agent,
+            system_tunnel_down,
+            system_tunnel_ensure,
+            system_tunnel_status,
+            system_tunnel_up,
+            uninstall_tunnel_launch_agent,
+        )
+
+        calls: list[list[str]] = []
+        ts_bin = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+        warp_bin = "/usr/local/bin/warp-cli"
+        state = {"ts": "Stopped", "exit": False, "warp": False}
+
+        def fake_runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+            calls.append(cmd)
+            if cmd == [warp_bin, "status"]:
+                txt = "Status update: Connected\n" if state["warp"] else "Status update: Disconnected\n"
+                return subprocess.CompletedProcess(cmd, 0, txt, "")
+            if cmd == [warp_bin, "settings"]:
+                return subprocess.CompletedProcess(cmd, 0, "(user set)\tMode: Warp\n", "")
+            if cmd == [warp_bin, "connect"]:
+                state["warp"] = True
+                return subprocess.CompletedProcess(cmd, 0, "Success\n", "")
+            if cmd == [warp_bin, "disconnect"]:
+                state["warp"] = False
+                return subprocess.CompletedProcess(cmd, 0, "Success\n", "")
+            if cmd == [ts_bin, "status", "--json"]:
+                payload: dict[str, object] = {"BackendState": state["ts"]}
+                if state["ts"] == "Running":
+                    payload["Peer"] = {
+                        "k1": {
+                            "HostName": "home-exit",
+                            "TailscaleIPs": ["100.123.154.74"],
+                            "Online": True,
+                            "ExitNodeOption": True,
+                            "ExitNode": state["exit"],
+                        }
+                    }
+                    if state["exit"]:
+                        payload["ExitNodeStatus"] = {
+                            "TailscaleIPs": ["100.123.154.74/32"],
+                            "Online": True,
+                        }
+                return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
+            if cmd == [ts_bin, "up"]:
+                state["ts"] = "Running"
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if cmd == [ts_bin, "set", "--exit-node=100.123.154.74", "--exit-node-allow-lan-access=true"]:
+                state["exit"] = True
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if cmd == [ts_bin, "ping", "-c", "1", "--timeout=3s", "100.123.154.74"]:
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    "pong from home-exit (100.123.154.74) via DERP(lon) in 29ms\n",
+                    "",
+                )
+            if cmd == [ts_bin, "set", "--exit-node="]:
+                state["exit"] = False
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if cmd == [ts_bin, "down"]:
+                state["ts"] = "Stopped"
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / "system_tunnel.json"
+            plist_file = Path(tmp) / "com.senza.fortigate-tailscale.plist"
+
+            with (
+                patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=[ts_bin]),
+                patch("senza.firewall_bypass.find_warp_cli", return_value=warp_bin),
+                # Simulate FortiGate blocking controlplane.tailscale.com
+                patch("senza.firewall_bypass.probe_tailscale_controlplane", return_value=(False, "blocked")),
+                patch("senza.firewall_bypass.probe_egress_via_tunnel", return_value=(True, "egress IP 198.51.100.7 (TR)")),
+                patch("senza.firewall_bypass.time.sleep", return_value=None),
+            ):
+                up_notes = system_tunnel_up(
+                    exit_node="100.123.154.74",
+                    warp_bootstrap="auto",
+                    fallback_warp=True,
+                    runner=fake_runner,
+                    state_file=state_file,
+                )
+
+                # Verify exact FortiGate bootstrap order: WARP connect -> tailscale up -> WARP disconnect -> exit-node
+                idx_wc = calls.index([warp_bin, "connect"])
+                idx_tu = calls.index([ts_bin, "up"])
+                idx_wd = calls.index([warp_bin, "disconnect"])
+                idx_ex = calls.index([ts_bin, "set", "--exit-node=100.123.154.74", "--exit-node-allow-lan-access=true"])
+                self.assertLess(idx_wc, idx_tu)
+                self.assertLess(idx_tu, idx_wd)
+                self.assertLess(idx_wd, idx_ex)
+                self.assertFalse(state["warp"])
+                self.assertTrue(state["exit"])
+                self.assertTrue(any("egress IP 198.51.100.7" in n for n in up_notes))
+                self.assertTrue(state_file.exists())
+
+                st = system_tunnel_status(runner=fake_runner, state_file=state_file, plist_path=plist_file)
+                self.assertTrue(st["active"])
+                self.assertEqual(st["active_backend"], "tailscale")
+
+                # Ensure should be a fast healthy no-op
+                ensure_notes = system_tunnel_ensure(runner=fake_runner, state_file=state_file)
+                self.assertTrue(any("already online & healthy" in n for n in ensure_notes))
+
+                # LaunchAgent install & uninstall
+                install_tunnel_launch_agent(
+                    exit_node="100.123.154.74",
+                    runner=fake_runner,
+                    plist_path=plist_file,
+                    cli_path="/Users/test/.local/bin/senza",
+                )
+                self.assertTrue(plist_file.exists())
+                plist_obj = plistlib.loads(plist_file.read_bytes())
+                self.assertEqual(plist_obj["StartInterval"], 45)
+                self.assertIn("100.123.154.74", plist_obj["ProgramArguments"])
+
+                uninstall_tunnel_launch_agent(runner=fake_runner, plist_path=plist_file)
+                self.assertFalse(plist_file.exists())
+
+                # Tear down system tunnel cleanly
+                down_notes = system_tunnel_down(runner=fake_runner, state_file=state_file)
+                self.assertFalse(state["exit"])
+                self.assertEqual(state["ts"], "Stopped")
+                self.assertFalse(state_file.exists())
+                self.assertTrue(any("Stopped Tailscale" in n for n in down_notes))
 
 
 if __name__ == "__main__":

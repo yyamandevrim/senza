@@ -23,8 +23,14 @@ from .app_bridge import (
 from .firewall_bypass import (
     DEFAULT_TAILSCALE_EXIT_NODE,
     FirewallBypass,
+    install_tunnel_launch_agent,
     probe_psn_firewall,
     restore_firewall_bypass,
+    system_tunnel_down,
+    system_tunnel_ensure,
+    system_tunnel_status,
+    system_tunnel_up,
+    uninstall_tunnel_launch_agent,
 )
 from .net_probe import probe_network
 from .profiles import export_runtime_config, load_profile
@@ -68,6 +74,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     chiaki = find_chiaki_app(args.chiaki_app)
     sony = find_sony_app(args.sony_app)
     fw = probe_psn_firewall(exit_node=args.exit_node)
+    sys_tun = system_tunnel_status(exit_node=args.exit_node)
 
     if args.json:
         report = probe_network(host=args.host)
@@ -75,6 +82,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         payload = {
             "network": dataclasses.asdict(report),
             "firewall": dataclasses.asdict(fw),
+            "system_tunnel": sys_tun,
             "recommended_preset": dataclasses.asdict(preset),
             "sony_app": str(sony) if sony else None,
             "sony_bundle_ready": PATCHED_SONY_APP.exists(),
@@ -99,7 +107,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         backends.append(f"vpn ({', '.join(fw.macos_vpns)})")
     print(f"  Bypass backends   : {', '.join(backends)}")
     if fw.tailscale_available:
+        cp_txt = "ok" if fw.tailscale_controlplane_ok else "BLOCKED (auto WARP-bootstrap will run)"
+        derp_txt = (
+            f"ok ({', '.join(fw.tailscale_derp_nodes)})"
+            if fw.tailscale_derp_ok
+            else "BLOCKED (TCP-443 relays unreachable)"
+        )
+        print(f"  TS controlplane   : {cp_txt}")
+        print(f"  TS DERP TCP-443   : {derp_txt}")
         print(f"  Tailscale exit    : {fw.tailscale_exit_node} -> {fw.tailscale_exit_node_status}")
+    tun_state = f"ACTIVE ({sys_tun['active_backend']})" if sys_tun["active"] else "off"
+    svc_state = "installed (45s watchdog)" if sys_tun["service_installed"] else "not installed"
+    print(f"  System tunnel     : {tun_state} | LaunchAgent: {svc_state}")
 
     print("\n=== Installation Check ===")
     print(f"  Sony RemotePlay   : {sony or 'NOT FOUND'} ({'ready' if PATCHED_SONY_APP.exists() else 'run `senza setup`'})")
@@ -194,6 +213,8 @@ def cmd_start(args: argparse.Namespace) -> int:
                 exit_node=args.exit_node,
                 gui_sudo=args.gui_sudo,
                 dry_run=True,
+                warp_bootstrap=args.warp_bootstrap,
+                fallback_warp=args.fallback_warp,
             )
             for note in fb.enter():
                 print(f"  {note}")
@@ -233,6 +254,8 @@ def cmd_start(args: argparse.Namespace) -> int:
             exit_node=args.exit_node,
             gui_sudo=args.gui_sudo,
             dry_run=False,
+            warp_bootstrap=args.warp_bootstrap,
+            fallback_warp=args.fallback_warp,
         )
         if args.bypass_firewall
         else None
@@ -277,6 +300,75 @@ def cmd_export_profile(args: argparse.Namespace) -> int:
     else:
         print(f"Exported runtime profile '{args.profile}' -> {exported}")
     return 0
+
+
+def cmd_tunnel(args: argparse.Namespace) -> int:
+    """Manage persistent system-wide FortiGate -> Tailscale Exit Node (+ WARP bootstrap/fallback) tunnel."""
+    action = args.tunnel_action
+    fallback_warp = not getattr(args, "no_fallback_warp", False)
+
+    if action == "status":
+        st = system_tunnel_status(exit_node=args.exit_node, probe_network_checks=True)
+        if args.json:
+            print(json.dumps(st, indent=2))
+            return 0
+        print("=== System-Wide FortiGate / Tailscale Tunnel ===")
+        print(f"  Active backend    : {st['active_backend'].upper()} ({'ACTIVE' if st['active'] else 'off'})")
+        print(f"  Target exit node  : {st['target_exit_node']}")
+        print(f"  Tailscale state   : {st['tailscale_state']}")
+        print(f"  Exit node status  : {st['tailscale_exit_node_status']}")
+        cp_ok = st.get("controlplane_ok")
+        print(f"  TS controlplane   : {'ok' if cp_ok else 'BLOCKED (' + str(st.get('controlplane_detail')) + ')'}")
+        derp_ok = st.get("derp_ok")
+        derp_nodes = st.get("derp_nodes") or []
+        print(f"  TS DERP TCP-443   : {'ok (' + ', '.join(derp_nodes) + ')' if derp_ok else 'BLOCKED'}")
+        print(f"  WARP MASQUE       : {'CONNECTED' if st['warp_connected'] else 'disconnected'}")
+        print(f"  LaunchAgent       : {'INSTALLED (45s auto-heal)' if st['service_installed'] else 'not installed'}")
+        return 0
+
+    if action == "on":
+        notes = system_tunnel_up(
+            exit_node=args.exit_node,
+            warp_bootstrap=args.warp_bootstrap,
+            fallback_warp=fallback_warp,
+            dry_run=args.dry_run,
+        )
+        for n in notes:
+            print(f"  [tunnel] {n}")
+        return 0
+
+    if action == "off":
+        notes = system_tunnel_down()
+        for n in notes:
+            print(f"  [tunnel] {n}")
+        return 0
+
+    if action == "ensure":
+        notes = system_tunnel_ensure(
+            exit_node=args.exit_node,
+            warp_bootstrap=args.warp_bootstrap,
+            fallback_warp=fallback_warp,
+        )
+        for n in notes:
+            print(f"  [tunnel] {n}")
+        return 0
+
+    if action == "install-service":
+        notes = install_tunnel_launch_agent(
+            exit_node=args.exit_node,
+            fallback_warp=fallback_warp,
+        )
+        for n in notes:
+            print(f"  [service] {n}")
+        return 0
+
+    if action == "uninstall-service":
+        notes = uninstall_tunnel_launch_agent()
+        for n in notes:
+            print(f"  [service] {n}")
+        return 0
+
+    return 1
 
 
 def cmd_restore(args: argparse.Namespace) -> int:
@@ -346,6 +438,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"Tailscale exit node IP/hostname (default in tailscale mode: {DEFAULT_TAILSCALE_EXIT_NODE})",
     )
+    p_start.add_argument(
+        "--warp-bootstrap",
+        default="auto",
+        choices=["auto", "always", "never"],
+        help="FortiGate controlplane bypass: auto (WARP ON -> tailscale up -> WARP OFF when blocked), always, or never",
+    )
+    p_start.add_argument(
+        "--fallback-warp",
+        action="store_true",
+        help="Fallback to Cloudflare WARP MASQUE (TCP-443) if Tailscale exit node is unavailable or blocked",
+    )
     p_start.add_argument("--hybrid", action="store_true", help="Hybrid Hot-Swap mode: start on physical DualSense with shared Ping/HUD/Mic shortcuts and instant '0' Trackpad switch")
     p_start.add_argument("--controller", "--no-kbm", dest="controller", action="store_true", help="Use physical DualSense/controller natively (keep WAN/macOS optimizations, skip virtual KBM pad)")
     p_start.add_argument("--keep-chiaki-kbm", action="store_true", help="Do not disable chiaki-ng built-in keyboard/mouse-touch")
@@ -353,6 +456,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--sony-app", default=None, help="Custom path to Sony RemotePlay.app")
     p_start.add_argument("--dry-run", action="store_true", help="Show planned actions without modifying system or launching")
     p_start.set_defaults(func=cmd_start)
+
+    p_tun = sub.add_parser(
+        "tunnel",
+        help="System-wide macOS FortiGate/Tailscale exit-node bypass (persists across all apps, optional LaunchAgent)",
+    )
+    p_tun.add_argument(
+        "tunnel_action",
+        choices=["on", "off", "status", "ensure", "install-service", "uninstall-service"],
+        help="on/off/status: control system tunnel; ensure: health-check/heal; install-service/uninstall-service: macOS LaunchAgent",
+    )
+    p_tun.add_argument(
+        "--exit-node",
+        default=None,
+        help=f"Tailscale exit node IP/hostname (default: {DEFAULT_TAILSCALE_EXIT_NODE})",
+    )
+    p_tun.add_argument(
+        "--warp-bootstrap",
+        default="auto",
+        choices=["auto", "always", "never"],
+        help="FortiGate controlplane WARP bootstrap mode (default: auto)",
+    )
+    p_tun.add_argument(
+        "--no-fallback-warp",
+        action="store_true",
+        help="Do not fall back to Cloudflare WARP MASQUE if Tailscale exit node is pending/offline/blocked",
+    )
+    p_tun.add_argument("--dry-run", action="store_true", help="Show planned tunnel steps without modifying state")
+    p_tun.add_argument("--json", action="store_true", help="Emit JSON output (for `status`)")
+    p_tun.set_defaults(func=cmd_tunnel)
 
     p_exp = sub.add_parser("export-profile", help="Validate JSON profile and write runtime_profile.cfg for live hot-reload")
     p_exp.add_argument("--profile", default="gta6", help="Profile name in profiles/ or path to JSON (default: gta6)")

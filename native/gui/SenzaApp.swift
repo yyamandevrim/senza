@@ -84,6 +84,15 @@ struct DoctorResponse: Decodable {
         let tailscale_exit_node: String?
         let tailscale_exit_node_ready: Bool?
         let tailscale_exit_node_status: String?
+        let tailscale_controlplane_ok: Bool?
+        let tailscale_derp_ok: Bool?
+        let fortigate_warp_bootstrap_needed: Bool?
+    }
+    struct SystemTunnel: Decodable {
+        let active: Bool
+        let active_backend: String
+        let target_exit_node: String
+        let service_installed: Bool
     }
     struct Preset: Decodable {
         let name: String
@@ -93,6 +102,7 @@ struct DoctorResponse: Decodable {
     }
     let network: Network
     let firewall: Firewall?
+    let system_tunnel: SystemTunnel?
     let recommended_preset: Preset
     let sony_app: String?
     let sony_bundle_ready: Bool?
@@ -177,6 +187,7 @@ final class SenzaController: ObservableObject {
     @Published var statusNote: String = "Ready to connect"
     @Published var doctor: DoctorResponse? = nil
     @Published var doctorLoading: Bool = false
+    @Published var tunnelBusy: Bool = false
     @Published var showControlsSheet: Bool = false
     @Published var showStudioSheet: Bool = false
     @Published var errorMessage: String? = nil
@@ -189,6 +200,7 @@ final class SenzaController: ObservableObject {
 
     weak var mainWindow: NSWindow?
     var onPhaseChanged: ((SessionPhase) -> Void)?
+    var onDoctorUpdated: (() -> Void)?
 
     private init() {
         let ud = UserDefaults.standard
@@ -308,6 +320,7 @@ final class SenzaController: ObservableObject {
                 self.doctorLoading = false
                 if let decoded {
                     self.doctor = decoded
+                    self.onDoctorUpdated?()
                 }
             }
         }
@@ -573,6 +586,105 @@ final class SenzaController: ObservableObject {
                 guard let self else { return }
                 self.setPhase(.idle)
                 self.statusNote = out.replacingOccurrences(of: "[restore]", with: "").trimmingCharacters(in: .whitespaces)
+                self.refreshDoctor()
+            }
+        }
+    }
+
+    func toggleSystemTunnel() {
+        guard !tunnelBusy else { return }
+        guard let cli = SenzaCLI.resolve() else {
+            errorMessage = "Senza CLI not found. Run `make install` first."
+            return
+        }
+        let isActive = doctor?.system_tunnel?.active == true
+        let exitNode = resolvedExitNode
+        tunnelBusy = true
+        statusNote = isActive
+            ? "Stopping system-wide tunnel…"
+            : "Enabling system-wide tunnel (\(exitNode))…"
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let proc = Process()
+            proc.executableURL = cli.executable
+            proc.currentDirectoryURL = cli.workingDir
+            proc.arguments = isActive
+                ? ["tunnel", "off"]
+                : ["tunnel", "on", "--exit-node", exitNode]
+            proc.environment = Self.baseEnv()
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+            var summary = isActive ? "System tunnel stopped" : "System tunnel updated"
+            do {
+                try proc.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                proc.waitUntilExit()
+                if let str = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !str.isEmpty {
+                    let lines = str.components(separatedBy: .newlines)
+                        .map { $0.replacingOccurrences(of: "[tunnel]", with: "").trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
+                    if let last = lines.last {
+                        summary = last
+                    }
+                }
+            } catch {
+                summary = "Tunnel command failed: \(error.localizedDescription)"
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.tunnelBusy = false
+                self.statusNote = summary
+                self.refreshDoctor()
+            }
+        }
+    }
+
+    func toggleTunnelService() {
+        guard !tunnelBusy else { return }
+        guard let cli = SenzaCLI.resolve() else { return }
+        let installed = doctor?.system_tunnel?.service_installed == true
+        let exitNode = resolvedExitNode
+        tunnelBusy = true
+        statusNote = installed
+            ? "Removing auto-heal LaunchAgent…"
+            : "Installing macOS auto-heal LaunchAgent…"
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let proc = Process()
+            proc.executableURL = cli.executable
+            proc.currentDirectoryURL = cli.workingDir
+            proc.arguments = installed
+                ? ["tunnel", "uninstall-service"]
+                : ["tunnel", "install-service", "--exit-node", exitNode]
+            proc.environment = Self.baseEnv()
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+            var summary = installed ? "LaunchAgent removed" : "LaunchAgent installed"
+            do {
+                try proc.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                proc.waitUntilExit()
+                if let str = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !str.isEmpty {
+                    let lines = str.components(separatedBy: .newlines)
+                        .map { $0.replacingOccurrences(of: "[service]", with: "").trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
+                    if let last = lines.last {
+                        summary = last
+                    }
+                }
+            } catch {
+                summary = "Service toggle failed: \(error.localizedDescription)"
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.tunnelBusy = false
+                self.statusNote = summary
                 self.refreshDoctor()
             }
         }
@@ -897,7 +1009,37 @@ struct SenzaRootView: View {
                             .foregroundStyle(.white.opacity(0.62))
                             .lineLimit(1)
                             .truncationMode(.tail)
-                        Spacer()
+                        Spacer(minLength: 4)
+                        let tunActive = ctrl.doctor?.system_tunnel?.active == true
+                        Button(action: { ctrl.toggleSystemTunnel() }) {
+                            HStack(spacing: 4) {
+                                if ctrl.tunnelBusy {
+                                    ProgressView().controlSize(.mini)
+                                } else {
+                                    Circle()
+                                        .fill(tunActive ? Color.green : Color.white.opacity(0.35))
+                                        .frame(width: 5.5, height: 5.5)
+                                }
+                                Text(tunActive ? "Mac Tunnel ON" : "Whole Mac")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundStyle(tunActive ? .green : .white.opacity(0.85))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                (tunActive ? Color.green.opacity(0.16) : Color.white.opacity(0.08)),
+                                in: Capsule()
+                            )
+                            .overlay(
+                                Capsule().stroke(
+                                    tunActive ? Color.green.opacity(0.42) : Color.white.opacity(0.14),
+                                    lineWidth: 0.75
+                                )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(ctrl.tunnelBusy)
+                        .help("Route entire Mac through Tailscale exit node (auto WARP-bootstrap on FortiGate)")
                     }
                 }
             }
@@ -2237,6 +2379,9 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         ctrl.onPhaseChanged = { [weak self] _ in
             self?.rebuildStatusMenu()
         }
+        ctrl.onDoctorUpdated = { [weak self] in
+            self?.rebuildStatusMenu()
+        }
         rebuildStatusMenu()
 
         if #available(macOS 14.0, *) {
@@ -2373,6 +2518,25 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         }
 
         menu.addItem(.separator())
+        let sysTun = ctrl.doctor?.system_tunnel
+        let tunActive = sysTun?.active == true
+        let backendLabel = (sysTun?.active_backend ?? "").uppercased()
+        let tunnelTitle = tunActive
+            ? "● System-Wide Bypass (\(backendLabel)) — Turn Off"
+            : "Enable System-Wide Bypass (\(ctrl.resolvedExitNode))"
+        let tunnelItem = NSMenuItem(title: tunnelTitle, action: #selector(menuToggleSystemTunnel), keyEquivalent: "t")
+        tunnelItem.target = self
+        menu.addItem(tunnelItem)
+
+        let svcInstalled = sysTun?.service_installed == true
+        let svcTitle = svcInstalled
+            ? "✓ Auto-Heal LaunchAgent (45s) — Uninstall"
+            : "Install Auto-Heal LaunchAgent (Whole Mac)"
+        let svcItem = NSMenuItem(title: svcTitle, action: #selector(menuToggleTunnelService), keyEquivalent: "")
+        svcItem.target = self
+        menu.addItem(svcItem)
+
+        menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit Senza", action: #selector(menuQuit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -2408,6 +2572,14 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
     @objc private func menuRestoreSystem() {
         ctrl.runRestoreSystem()
+    }
+
+    @objc private func menuToggleSystemTunnel() {
+        ctrl.toggleSystemTunnel()
+    }
+
+    @objc private func menuToggleTunnelService() {
+        ctrl.toggleTunnelService()
     }
 
     @objc private func menuQuit() {
