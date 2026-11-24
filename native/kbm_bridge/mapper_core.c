@@ -65,74 +65,100 @@ void psr_config_init_default(PsrConfig *cfg) {
     cfg->trackpad_mode = true;
     cfg->trackpad_accel = 1.45f;
 
-    /* On-Foot GTA 6 Official Default layout (zero F-keys, Karabiner-safe) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, PSR_KEY_LMB, PSR_TRIGGER_R2); /* Trackpad click = Shoot */
+    /* On-Foot / Melee / Swimming / Parachute — Official GTA 6 Default layout */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, PSR_KEY_LMB, PSR_TRIGGER_R2); /* Trackpad click = Shoot / Grapple / Chute Brake R */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 38, PSR_TRIGGER_R2);          /* J = Shoot alt */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 59, PSR_TRIGGER_L2);          /* LeftControl (CapsLock!) = Aim/Interact */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 59, PSR_TRIGGER_L2);          /* LeftControl (CapsLock!) = Aim / Lock-On / Chute Brake L */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 40, PSR_TRIGGER_L2);          /* K = Aim alt */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 58, PSR_TRIGGER_L2);          /* LeftOption = Aim alt */
     add_binding(cfg->on_foot, &cfg->on_foot_count, PSR_KEY_RMB, PSR_TRIGGER_L2); /* Two-finger click = Aim alt */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 56, PSR_BTN_L3);              /* LeftShift = Run (L3) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 49, PSR_BTN_CROSS);           /* Space = Jump / Climb (X) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 56, PSR_BTN_L3);              /* LeftShift = Run / Swim Faster (L3) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 49, PSR_BTN_CROSS);           /* Space = Jump / Climb / Dodge / Surface / Chute (X) */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 36, PSR_BTN_CROSS);           /* Return = Menu Confirm (X) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 8, PSR_BTN_CIRCLE);           /* C = Crouch (O) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 8, PSR_BTN_CIRCLE);           /* C = Crouch / Hold: Rest (O) */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 51, PSR_BTN_CIRCLE);          /* Backspace = Menu Back (O) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 15, PSR_BTN_SQUARE);          /* R = Melee / Reload (Square) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 9, PSR_BTN_SQUARE);           /* V = Melee alt (Square) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 14, PSR_BTN_TRIANGLE);        /* E = Pure Interact (Triangle, no mode flip) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 3, PSR_BTN_TRIANGLE);         /* F = Enter/Exit Vehicle (Triangle + Smart Auto) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 12, PSR_BTN_R1);              /* Q = Cover (R1) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 48, PSR_BTN_L1);              /* Tab = Holster / Weapon Wheel (L1) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 15, PSR_BTN_SQUARE);          /* R = Melee / Punch-Kick (Square) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 9, PSR_BTN_SQUARE);           /* V = Melee alt (Aiming Smart: 1-Tap Switch Shoulder) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 14, PSR_BTN_TRIANGLE);        /* E = Interact / Quick Swap Weapon (Triangle) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 3, PSR_BTN_TRIANGLE);         /* F = Enter/Exit Vehicle / Detach Chute (+ Smart Auto) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 12, PSR_BTN_R1);              /* Q = Cover / Aim: Quick Throw / Swim: Dive (R1) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 48, PSR_BTN_L1);              /* Tab = Holster / Hold: Loadout Wheel (L1) */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 46, PSR_BTN_TOUCHPAD);        /* M = Map (Touchpad) */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 53, PSR_BTN_OPTIONS);         /* Escape = Pause (Options) */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 11, PSR_BTN_R3);              /* B = Look Behind (R3) */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 11, PSR_BTN_R3);              /* B = Look Behind / Aim: Zoom-Throw Path (R3) */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 7, PSR_BTN_R3);               /* X = Look Behind alt (R3) */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 35, PSR_BTN_PS);              /* P = PS Button */
     add_binding(cfg->on_foot, &cfg->on_foot_count, 45, PSR_BTN_SHARE);           /* N = Create / Share */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 126, PSR_BTN_DPAD_UP);        /* Up = Cellphone */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 125, PSR_BTN_DPAD_DOWN);      /* Down = Objective / Minimap */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 123, PSR_BTN_DPAD_LEFT);      /* Left = Detonate Explosives */
-    add_binding(cfg->on_foot, &cfg->on_foot_count, 124, PSR_BTN_DPAD_RIGHT);     /* Right = Radio Controls */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 18, PSR_BTN_DPAD_UP);         /* 1 = Cellphone / Hold: Waink App */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 19, PSR_BTN_DPAD_RIGHT);      /* 2 = Detonate / Hold: Partner Menu */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 20, PSR_BTN_DPAD_DOWN);       /* 3 = Minimap / Hold: Quick Nav */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 21, PSR_BTN_DPAD_LEFT);       /* 4 = Radio / Hold: Radio Menu / Aim: Shoulder */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 126, PSR_BTN_DPAD_UP);        /* Up = D-Pad Up */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 125, PSR_BTN_DPAD_DOWN);      /* Down = D-Pad Down */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 123, PSR_BTN_DPAD_LEFT);      /* Left = D-Pad Left */
+    add_binding(cfg->on_foot, &cfg->on_foot_count, 124, PSR_BTN_DPAD_RIGHT);     /* Right = D-Pad Right */
 
-    /* Vehicle GTA 6 MacBook defaults */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 13, PSR_TRIGGER_R2);          /* W = Gas */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 1, PSR_TRIGGER_L2);           /* S = Brake / Reverse */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 49, PSR_BTN_R1);              /* Space = Handbrake */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, PSR_KEY_LMB, PSR_BTN_L1);     /* Trackpad click = Drive-by fire */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 58, PSR_BTN_L1);              /* LeftOption = Drive-by fire */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, PSR_KEY_RMB, PSR_BTN_R1);
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 3, PSR_BTN_TRIANGLE);         /* F = Exit vehicle (+ Smart Auto) */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 14, PSR_BTN_L3);              /* E = Horn */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 12, PSR_BTN_SQUARE);          /* Q = Radio / Weapon wheel */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 15, PSR_BTN_CIRCLE);          /* R = Cinematic cam */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 48, PSR_BTN_L1);              /* Tab */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 46, PSR_BTN_TOUCHPAD);        /* M = Map */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 9, PSR_BTN_TOUCHPAD);         /* V = Map / Camera */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 8, PSR_BTN_R3);               /* C = Look behind */
-    add_binding(cfg->vehicle, &cfg->vehicle_count, 53, PSR_BTN_OPTIONS);         /* Escape = Pause */
+    /* Land / Water Vehicle & Bicycle — Official GTA 6 Default layout */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 13, PSR_TRIGGER_R2);          /* W = Accelerate / Pedal (R2) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 1, PSR_TRIGGER_L2);           /* S = Brake / Reverse (L2) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 49, PSR_BTN_CROSS);           /* Space = Handbrake / Bike Speed Up (X) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 36, PSR_BTN_CROSS);           /* Return = Confirm (X) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, PSR_KEY_LMB, PSR_BTN_R1);     /* Trackpad Click = Vehicle Shoot (R1) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 38, PSR_BTN_R1);              /* J = Vehicle Shoot alt (R1) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 12, PSR_BTN_R1);              /* Q = Vehicle Shoot alt (R1) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 48, PSR_BTN_L1);              /* Tab = Holster / Hold: Loadout Wheel (L1) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 59, PSR_BTN_L1);              /* CapsLock(Ctrl) = Holster / Loadout (L1) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, PSR_KEY_RMB, PSR_BTN_L1);     /* Right-Click = Holster / Loadout (L1) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 8, PSR_BTN_CIRCLE);           /* C = Headlights / Hold: Duck / Bike: Bunnyhop (O) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 51, PSR_BTN_CIRCLE);          /* Backspace = Menu Back (O) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 15, PSR_BTN_SQUARE);          /* R = Vehicle / Bike Melee (Square) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 56, PSR_BTN_L3);              /* LeftShift = Horn / Nitrous / Bike Bell (L3) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 14, PSR_BTN_L3);              /* E = Horn / Nitrous alt (L3) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 3, PSR_BTN_TRIANGLE);         /* F = Exit Vehicle / Dismount (+ Smart Auto) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 11, PSR_BTN_R3);              /* B = Look Behind (R3) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 7, PSR_BTN_R3);               /* X = Look Behind alt (R3) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 46, PSR_BTN_TOUCHPAD);        /* M = Map (Touchpad) */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 9, PSR_BTN_TOUCHPAD);         /* V = Map alt */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 53, PSR_BTN_OPTIONS);         /* Escape = Pause (Options) */
     add_binding(cfg->vehicle, &cfg->vehicle_count, 35, PSR_BTN_PS);              /* P = PS Button */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 45, PSR_BTN_SHARE);           /* N = Share */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 18, PSR_BTN_DPAD_UP);         /* 1 = Cellphone / Hold: Interact */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 19, PSR_BTN_DPAD_RIGHT);      /* 2 = Blinker R / Hold: Partner Menu */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 20, PSR_BTN_DPAD_DOWN);       /* 3 = Minimap / Hold: Quick Nav */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 21, PSR_BTN_DPAD_LEFT);       /* 4 = Blinker L / Hold: Vehicle Menu */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 126, PSR_BTN_DPAD_UP);        /* Up = D-Pad Up */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 125, PSR_BTN_DPAD_DOWN);      /* Down = D-Pad Down */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 123, PSR_BTN_DPAD_LEFT);      /* Left = D-Pad Left */
+    add_binding(cfg->vehicle, &cfg->vehicle_count, 124, PSR_BTN_DPAD_RIGHT);     /* Right = D-Pad Right */
 
-    /* Aircraft / Helicopter GTA 6 MacBook defaults (W/S=Throttle, A/D=Roll, Up/Down or Shift/C=Pitch, Q/E=Rudder) */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 13, PSR_TRIGGER_R2);        /* W = Throttle Up / Ascend */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 1, PSR_TRIGGER_L2);         /* S = Airbrake / Descend */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 12, PSR_BTN_L1);            /* Q = Rudder Left */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 14, PSR_BTN_R1);            /* E = Rudder Right */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 123, PSR_BTN_L1);           /* Left = Rudder Left alt */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 124, PSR_BTN_R1);           /* Right = Rudder Right alt */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 49, PSR_BTN_CROSS);         /* Space = Fire Weapons */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, PSR_KEY_LMB, PSR_BTN_CROSS);/* Trackpad click = Fire */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 48, PSR_BTN_SQUARE);        /* Tab = Cycle Weapons */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 59, PSR_BTN_SQUARE);        /* CapsLock = Cycle Weapons */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, PSR_KEY_RMB, PSR_BTN_SQUARE);
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 15, PSR_BTN_L3);            /* R = Landing Gear */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 3, PSR_BTN_TRIANGLE);       /* F = Exit / Bail Out */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 11, PSR_BTN_R3);            /* B = Look Behind */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 7, PSR_BTN_R3);             /* X = Look Behind alt */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 46, PSR_BTN_TOUCHPAD);      /* M = Map */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 9, PSR_BTN_TOUCHPAD);       /* V = Camera / Map */
-    add_binding(cfg->aircraft, &cfg->aircraft_count, 53, PSR_BTN_OPTIONS);       /* Escape = Pause */
+    /* Aircraft / Helicopter — Official GTA 6 Default layout
+     * Pitch/Roll (L-Stick): Arrow keys ↑↓←→ (two-hand) OR A/D + Shift/C (one-hand + Trackpad)
+     * Throttle: W (R2) / S (L2) · Yaw Left/Right: Q (Square) / E (Circle) · Shoot: Space / LMB (R1) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 13, PSR_TRIGGER_R2);        /* W = Throttle Up (R2) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 1, PSR_TRIGGER_L2);         /* S = Throttle Down (L2) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 12, PSR_BTN_SQUARE);        /* Q = Yaw Left (Square) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 14, PSR_BTN_CIRCLE);        /* E = Yaw Right (Circle) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 49, PSR_BTN_R1);            /* Space = Shoot (R1) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, PSR_KEY_LMB, PSR_BTN_R1);   /* Trackpad Click = Shoot (R1) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 38, PSR_BTN_R1);            /* J = Shoot alt (R1) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 48, PSR_BTN_L1);            /* Tab = Holster / Weapon (L1) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 59, PSR_BTN_L1);            /* CapsLock(Ctrl) = Holster (L1) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, PSR_KEY_RMB, PSR_BTN_L1);   /* Right-Click = Holster (L1) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 15, PSR_BTN_L3);            /* R = Undercarriage / Landing Gear (L3) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 3, PSR_BTN_TRIANGLE);       /* F = Exit / Bail Out (+ Smart Auto) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 36, PSR_BTN_CROSS);         /* Return = Menu Confirm (X) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 51, PSR_BTN_CIRCLE);        /* Backspace = Menu Back (O) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 11, PSR_BTN_R3);            /* B = Look Behind (R3) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 7, PSR_BTN_R3);             /* X = Look Behind alt (R3) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 46, PSR_BTN_TOUCHPAD);      /* M = Map (Touchpad) */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 9, PSR_BTN_TOUCHPAD);       /* V = Map alt */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 53, PSR_BTN_OPTIONS);       /* Escape = Pause (Options) */
     add_binding(cfg->aircraft, &cfg->aircraft_count, 35, PSR_BTN_PS);            /* P = PS Button */
     add_binding(cfg->aircraft, &cfg->aircraft_count, 45, PSR_BTN_SHARE);         /* N = Share */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 18, PSR_BTN_DPAD_UP);       /* 1 = Cellphone */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 19, PSR_BTN_DPAD_RIGHT);    /* 2 = Hold: Partner Menu */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 20, PSR_BTN_DPAD_DOWN);     /* 3 = Minimap / Hold: Quick Nav */
+    add_binding(cfg->aircraft, &cfg->aircraft_count, 21, PSR_BTN_DPAD_LEFT);     /* 4 = Radio / Hold: Vehicle Menu */
 }
 
 void psr_mapper_init(PsrMapper *m, const PsrConfig *cfg) {
@@ -177,6 +203,7 @@ void psr_mapper_reset_inputs(PsrMapper *m) {
     m->swipe_elapsed_ms = 0.0f;
     m->scroll_pulse_btn = -1;
     m->scroll_pulse_ms = 0.0f;
+    m->shoulder_pulse_ms = 0.0f;
     memset(&m->pad, 0, sizeof(m->pad));
 }
 
@@ -283,7 +310,7 @@ bool psr_mapper_handle_key(PsrMapper *m, int input_code, bool is_down) {
 
     if (m->cfg.sens_down_key >= 0 && input_code == m->cfg.sens_down_key) {
         if (is_down && !m->keys_down[input_code]) {
-            m->cfg.sensitivity = clampf(roundf((m->cfg.sensitivity - 0.10f) * 100.0f) / 100.0f, 0.40f, 3.00f);
+            m->cfg.sensitivity = clampf(roundf((m->cfg.sensitivity - 0.10f) * 100.0f) / 100.0f, 0.40f, 6.00f);
             m->sens_dirty = true;
         }
         m->keys_down[input_code] = is_down;
@@ -292,7 +319,7 @@ bool psr_mapper_handle_key(PsrMapper *m, int input_code, bool is_down) {
 
     if (m->cfg.sens_up_key >= 0 && input_code == m->cfg.sens_up_key) {
         if (is_down && !m->keys_down[input_code]) {
-            m->cfg.sensitivity = clampf(roundf((m->cfg.sensitivity + 0.10f) * 100.0f) / 100.0f, 0.40f, 3.00f);
+            m->cfg.sensitivity = clampf(roundf((m->cfg.sensitivity + 0.10f) * 100.0f) / 100.0f, 0.40f, 6.00f);
             m->sens_dirty = true;
         }
         m->keys_down[input_code] = is_down;
@@ -304,6 +331,17 @@ bool psr_mapper_handle_key(PsrMapper *m, int input_code, bool is_down) {
             m->mic_pressed_edge = true;
         }
         m->keys_down[input_code] = is_down;
+        return true;
+    }
+
+    /* Smart Mode: 1-tap 'V' while aiming (L2 held on-foot) holds D-Pad Left 480ms = Switch Shoulder */
+    if (m->smart_mode &&
+        !m->vehicle_mode && !m->aircraft_mode &&
+        m->pad.l2 > 0 &&
+        input_code == 9 /* V */ &&
+        is_down && !m->keys_down[input_code]) {
+        m->shoulder_pulse_ms = 480.0f;
+        m->keys_down[input_code] = true;
         return true;
     }
 
@@ -344,12 +382,12 @@ void psr_mapper_add_mouse_delta(PsrMapper *m, float dx, float dy) {
 void psr_mapper_add_scroll(PsrMapper *m, float dx, float dy) {
     if (!m->capture_active) return;
 
-    /* While aiming on foot (L2 held), two-finger vertical scroll pulses D-Pad Up/Down for sniper scope zoom */
+    /* While aiming on foot (L2 held), two-finger vertical scroll holds D-Pad Up/Down for sniper scope zoom */
     if (!m->vehicle_mode && !m->aircraft_mode && m->pad.l2 > 0) {
         if (m->scroll_zoom_cooldown_ms <= 0.0f && fabsf(dy) >= 2.5f) {
             m->scroll_pulse_btn = (dy > 0.0f) ? PSR_BTN_DPAD_UP : PSR_BTN_DPAD_DOWN;
-            m->scroll_pulse_ms = 65.0f;
-            m->scroll_zoom_cooldown_ms = 120.0f;
+            m->scroll_pulse_ms = 140.0f;
+            m->scroll_zoom_cooldown_ms = 145.0f;
         }
         return;
     }
@@ -449,6 +487,10 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
 
     for (int i = 0; i < count; i++) {
         if (!is_key_down(m, bindings[i].input_code)) continue;
+        /* When 1-tap Switch Shoulder (V while aiming) is active, suppress Square on V */
+        if (m->shoulder_pulse_ms > 0.0f && bindings[i].input_code == 9 && bindings[i].target == PSR_BTN_SQUARE) {
+            continue;
+        }
         PsrTarget t = bindings[i].target;
         if (t == PSR_TRIGGER_L2) {
             next.l2 = 32767;
@@ -464,7 +506,7 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
         next.buttons[PSR_BTN_MIC] = 1;
     }
 
-    /* Rapid-Tap QTE / Bicycle / Swim Assist ('L'): 12.5 Hz Cross pulse */
+    /* Rapid-Tap QTE / Bicycle Speed Up / Swim Assist ('L'): 12.5 Hz Cross pulse */
     bool rapid_held = (m->cfg.rapid_tap_key >= 0) && is_key_down(m, m->cfg.rapid_tap_key);
     if (rapid_held) {
         if (!m->rapid_tap_active) {
@@ -490,6 +532,15 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
         if (m->scroll_pulse_ms <= 0.0f) {
             m->scroll_pulse_ms = 0.0f;
             m->scroll_pulse_btn = -1;
+        }
+    }
+
+    /* Smart 1-Tap Switch Shoulder ('V' while aiming L2) -> 480ms D-Pad Left hold */
+    if (m->shoulder_pulse_ms > 0.0f) {
+        next.buttons[PSR_BTN_DPAD_LEFT] = 1;
+        m->shoulder_pulse_ms -= dt_ms;
+        if (m->shoulder_pulse_ms <= 0.0f) {
+            m->shoulder_pulse_ms = 0.0f;
         }
     }
 
@@ -519,16 +570,23 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
     if (is_key_down(m, m->cfg.move_right_key)) lx += 1.0f;
 
     if (m->aircraft_mode) {
-        /* Aircraft pitch: Up arrow or LeftShift = Nose Down (-Y), Down arrow or C = Nose Up (+Y) */
-        if (is_key_down(m, 126) || is_key_down(m, 56)) ly -= 1.0f;
-        if (is_key_down(m, 125) || is_key_down(m, 8))  ly += 1.0f;
+        /* Aircraft Pitch & Roll (Left Analog Stick):
+         * Two-hand mode: Arrow keys ↑↓←→ act as a crisp flight stick (Pitch + Roll)
+         * One-hand mode: A/D = Roll, LeftShift/C = Pitch (frees right hand for Trackpad look) */
+        if (is_key_down(m, 123 /* Left Arrow */))  lx -= 1.0f;
+        if (is_key_down(m, 124 /* Right Arrow */)) lx += 1.0f;
+        if (is_key_down(m, 126 /* Up Arrow */) || is_key_down(m, 56 /* LeftShift */)) ly -= 1.0f;
+        if (is_key_down(m, 125 /* Down Arrow */) || is_key_down(m, 8 /* C */))        ly += 1.0f;
+        lx = clampf(lx, -1.0f, 1.0f);
+        ly = clampf(ly, -1.0f, 1.0f);
 
         if (m->cruise_active && next.l2 == 0) {
             next.r2 = 27850; /* ~85% smooth flight cruise throttle */
         }
         if (m->smart_mode) {
-            m->smooth_steer_lx = smooth_ramp_axis(m->smooth_steer_lx, lx, dt_sec, 9.5f, 24.0f, 18.0f);
-            m->smooth_pitch_ly = smooth_ramp_axis(m->smooth_pitch_ly, ly, dt_sec, 9.5f, 24.0f, 18.0f);
+            /* Gentle, buttery flight stick ramping so key taps make micro-adjustments instead of violent rolls */
+            m->smooth_steer_lx = smooth_ramp_axis(m->smooth_steer_lx, lx, dt_sec, 6.5f, 16.0f, 14.0f);
+            m->smooth_pitch_ly = smooth_ramp_axis(m->smooth_pitch_ly, ly, dt_sec, 6.5f, 16.0f, 14.0f);
             lx = clampf(m->smooth_steer_lx, -1.0f, 1.0f);
             ly = clampf(m->smooth_pitch_ly, -1.0f, 1.0f);
         } else {
@@ -576,8 +634,8 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
     /* 3. Right stick:
      *   Priority 1 = Hotwire Semi-Circle Assist (U)
      *   Priority 2 = 360-deg Full-Circle Assist (I)
-     *   Priority 3 = Sticky Virtual R-Stick (Y, or Smart Radial Wheel Tab/Q)
-     *   Priority 4 = Trackpad velocity aim with ADS + Precision Sniper (L2+Z) & flick accel */
+     *   Priority 3 = Sticky Virtual R-Stick (Y, or Smart Loadout Wheel Tab = L1)
+     *   Priority 4 = SilkTrack velocity aim with ADS + Precision Sniper (L2+Z) & flick accel */
     float sens = m->cfg.sensitivity > 0.05f ? m->cfg.sensitivity : 1.0f;
     bool hotwire_held = (m->cfg.hotwire_assist_key >= 0) && is_key_down(m, m->cfg.hotwire_assist_key);
     bool circle_held = !hotwire_held && (m->cfg.circle_assist_key >= 0) && is_key_down(m, m->cfg.circle_assist_key);
@@ -585,17 +643,12 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
                               (m->cfg.rstick_hold_key >= 0) && is_key_down(m, m->cfg.rstick_hold_key);
 
     /* Smart Auto-Radial Wheel detection:
-     * On-Foot: holding Tab (L1) >= 120ms -> Weapon Wheel sticky R-stick
-     * Vehicle: holding Q (Square) >= 180ms -> Radio/Weapon Wheel sticky R-stick */
+     * GTA 6 Loadout Wheel is Hold L1 (Tab) in BOTH On-Foot and Vehicle/Bicycle modes! */
     bool wheel_candidate = false;
-    float wheel_threshold_ms = 120.0f;
+    float wheel_threshold_ms = 135.0f;
     if (m->smart_mode && !hotwire_held && !circle_held && !manual_sticky_held && !m->aircraft_mode) {
-        if (!m->vehicle_mode && is_key_down(m, 48 /* Tab = L1 */)) {
+        if (is_key_down(m, 48 /* Tab = L1 */)) {
             wheel_candidate = true;
-            wheel_threshold_ms = 120.0f;
-        } else if (m->vehicle_mode && is_key_down(m, 12 /* Q = Square */)) {
-            wheel_candidate = true;
-            wheel_threshold_ms = 180.0f;
         }
     }
 

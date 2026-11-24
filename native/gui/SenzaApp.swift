@@ -1081,18 +1081,18 @@ struct ControlsCheatSheetView: View {
 
     private let rows: [(String, String)] = [
         ("DualSense Hot-Swap", "Touch physical DualSense anytime · [0] switches back to Trackpad"),
-        ("0 (Zero)", "Toggle Trackpad + Keyboard capture ON / OFF"),
+        ("0 (Zero)  /  \\", "0: Lock/Release Capture · \\: Toggle Live PS→Key Bottom Bar"),
         ("F / G / O", "F: Enter/Exit (Auto Car) · G: Car · O: Aircraft"),
-        ("2-Finger Scroll", "DualSense Touchpad Swipe · Aiming (L2): Sniper Zoom"),
-        ("U / I / Y (Hold)", "U: Hotwire (◡) · I: 360° Circle · Y: Sticky R-Stick"),
-        ("L (Hold)", "Rapid-Tap ✕ (12.5 Hz) — Bike / Swim / QTE"),
-        ("- / =", "Live Sensitivity ±0.10 (auto-saved to gta6.json)"),
-        ("CapsLock + Z", "Aim (L2) + Extra Precision Sniper Scale"),
-        ("[  /  ;  /  H  /  T", "PS5 Mic Mute · Ping/AWDL Pill · HUD · Smart Mode"),
-        ("] (Toggle)", "Auto-Sprint (Foot) · Cruise Control (Car / Air)"),
-        ("Trackpad / J", "Look & Aim (R-Stick) · Click / J = R2 Shoot"),
-        ("W A S D / Shift / Space", "Move · Run (L3) · Jump (✕) / Handbrake (Car R1)"),
-        ("Aircraft Pitch / Rudder", "↑/↓ or Shift/C: Pitch · Q/E or ←/→: Rudder · R: Gear"),
+        ("Aiming (Ctrl / RMB)", "L2 Aim · +V: 1-Tap Switch Shoulder · +Z: Sniper · 2P: Scope Zoom"),
+        ("Vehicle / Bicycle", "W/S: Gas/Brake · Space: Handbrake/Bike(✕) · Click/Q: Shoot(R1) · C: Lights/Duck(◯)"),
+        ("Vehicle Extras", "Tab: Loadout Wheel(L1) · R: Melee(▢) · Shift/E: Horn/Nitro(L3) · 1-4: D-Pad"),
+        ("Aircraft Flight", "W/S: Throttle · ↑↓←→: Pitch & Roll (2-Hand) · A/D + Shift/C: 1-Hand"),
+        ("Aircraft Combat", "Q/E: Yaw Left(▢) / Right(◯) · Space/Click: Shoot(R1) · Tab: L1 · R: Gear(L3)"),
+        ("U / I / Y / L (Hold)", "U: Hotwire (◡) · I: 360° Circle · Y: Sticky R-Stick · L: Rapid ✕"),
+        ("2-Finger Scroll", "DualSense Touchpad Swipe · While Aiming (L2): Hold D-Pad Up/Down Zoom"),
+        ("- / =  ·  [  ·  ;  ·  H", "Live Sens ±0.10 · PS5 Mic Mute · Ping/AWDL · Top-Right HUD"),
+        ("] (Toggle)", "Auto-Sprint (Foot) · Cruise Control (Car / Aircraft)"),
+        ("W A S D · Space · C · R", "Move · Jump/Swim(✕) · Crouch/Kick(◯) · Reload/Melee(▢) · E: Interact(△)"),
     ]
 
     var body: some View {
@@ -1384,7 +1384,7 @@ final class ProfileStudioModel: ObservableObject {
             sniperScale = 0.45
             deadzone = 0.16
             curveExponent = 0.85
-            smoothing = 0.30
+            smoothing = 0.35
             trackpadAccel = 1.45
         }
     }
@@ -1413,16 +1413,24 @@ final class ProfileStudioModel: ObservableObject {
             "Up": "DPAD_UP", "Right": "DPAD_RIGHT", "Down": "DPAD_DOWN", "Left": "DPAD_LEFT",
         ])
         vehicle = decodeMap([
-            "W": "R2", "S": "L2", "Space": "R1", "RMB": "R1", "LMB": "L1", "LeftControl": "L1",
-            "Tab": "L1", "F": "TRIANGLE", "E": "L3", "Q": "SQUARE", "R": "CIRCLE", "C": "R3",
-            "M": "TOUCHPAD", "V": "TOUCHPAD", "Escape": "OPTIONS", "P": "PS",
+            "W": "R2", "S": "L2", "Space": "CROSS", "Return": "CROSS",
+            "LMB": "R1", "J": "R1", "Q": "R1",
+            "Tab": "L1", "LeftControl": "L1", "RMB": "L1",
+            "C": "CIRCLE", "Backspace": "CIRCLE", "R": "SQUARE",
+            "LeftShift": "L3", "E": "L3", "F": "TRIANGLE",
+            "B": "R3", "X": "R3", "M": "TOUCHPAD", "V": "TOUCHPAD",
+            "Escape": "OPTIONS", "P": "PS", "N": "SHARE",
+            "1": "DPAD_UP", "2": "DPAD_RIGHT", "3": "DPAD_DOWN", "4": "DPAD_LEFT",
             "Up": "DPAD_UP", "Right": "DPAD_RIGHT", "Down": "DPAD_DOWN", "Left": "DPAD_LEFT",
         ])
         aircraft = decodeMap([
-            "W": "R2", "S": "L2", "Q": "L1", "Left": "L1", "E": "R1", "Right": "R1",
-            "Space": "CROSS", "LMB": "CROSS", "Tab": "SQUARE", "RMB": "SQUARE", "LeftControl": "SQUARE",
-            "R": "L3", "F": "TRIANGLE", "M": "TOUCHPAD", "V": "TOUCHPAD",
-            "B": "R3", "X": "R3", "N": "SHARE", "Escape": "OPTIONS", "P": "PS",
+            "W": "R2", "S": "L2", "Q": "SQUARE", "E": "CIRCLE",
+            "Space": "R1", "LMB": "R1", "J": "R1",
+            "Tab": "L1", "LeftControl": "L1", "RMB": "L1",
+            "R": "L3", "F": "TRIANGLE", "Return": "CROSS", "Backspace": "CIRCLE",
+            "B": "R3", "X": "R3", "M": "TOUCHPAD", "V": "TOUCHPAD",
+            "Escape": "OPTIONS", "P": "PS", "N": "SHARE",
+            "1": "DPAD_UP", "2": "DPAD_RIGHT", "3": "DPAD_DOWN", "4": "DPAD_LEFT",
         ])
         statusText = "GTA 6 defaults staged — click Save & Hot-Reload to apply."
     }

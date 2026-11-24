@@ -68,14 +68,18 @@ static void test_vehicle_mode_and_release_reset(void) {
     assert(psr_mapper_handle_key(&m, 5, false));
     assert(m.vehicle_mode == true);
 
-    /* In Vehicle Mode (Smart Mode ON): A ramps smoothly and hits full lock within ~100ms */
-    psr_mapper_handle_key(&m, 13, true);
-    psr_mapper_handle_key(&m, 0, true);
-    psr_mapper_handle_key(&m, 49, true);
+    /* In Vehicle Mode (Smart Mode ON): A ramps smoothly and hits full lock within ~100ms.
+     * Official GTA 6 Vehicle controls: Space=CROSS (Handbrake/Bike Speed Up), LMB/Q=R1 (Shoot),
+     * C=CIRCLE (Headlights/Hold Duck), R=SQUARE (Melee), Tab=L1 (Loadout Wheel). */
+    psr_mapper_handle_key(&m, 13, true); /* W -> R2 */
+    psr_mapper_handle_key(&m, 0, true);  /* A -> smooth steer */
+    psr_mapper_handle_key(&m, 49, true); /* Space -> CROSS (Handbrake) */
+    psr_mapper_handle_key(&m, PSR_KEY_LMB, true); /* LMB -> R1 (Shoot) */
     psr_mapper_tick(&m, 8.0f);
     assert(m.pad.r2 == 32767);
     assert(m.pad.ly == 0);
     assert(m.pad.lx < 0 && m.pad.lx > -10000); /* Gentle initial ramp on short tap */
+    assert(m.pad.buttons[PSR_BTN_CROSS] == 1);
     assert(m.pad.buttons[PSR_BTN_R1] == 1);
 
     for (int i = 0; i < 15; i++) {
@@ -83,10 +87,20 @@ static void test_vehicle_mode_and_release_reset(void) {
     }
     assert(m.pad.lx < -32000); /* Full lock reached smoothly */
 
+    /* Holding Tab (48 = L1) >= 135ms in Vehicle Mode also activates Sticky Loadout Wheel */
+    psr_mapper_handle_key(&m, 48, true);
+    for (int i = 0; i < 12; i++) {
+        psr_mapper_tick(&m, 16.0f);
+    }
+    assert(m.pad.buttons[PSR_BTN_L1] == 1);
+    assert(m.rstick_sticky_active == true);
+    psr_mapper_handle_key(&m, 48, false);
+
     /* Releasing capture zeroes all outputs (no stuck keys/triggers) */
     psr_mapper_set_capture(&m, false);
     psr_mapper_tick(&m, 8.0f);
-    assert(m.pad.r2 == 0 && m.pad.lx == 0 && m.pad.buttons[PSR_BTN_R1] == 0);
+    assert(m.pad.r2 == 0 && m.pad.lx == 0 &&
+           m.pad.buttons[PSR_BTN_CROSS] == 0 && m.pad.buttons[PSR_BTN_R1] == 0);
 }
 
 static void test_smart_hotwire_and_sticky_rstick(void) {
@@ -139,9 +153,9 @@ static void test_smart_radial_wheel_auto_vehicle_and_cruise(void) {
     psr_mapper_init(&m, NULL);
     psr_mapper_set_capture(&m, true);
 
-    /* Holding Tab (48 = L1) >= 120ms activates Sticky Weapon Wheel */
+    /* Holding Tab (48 = L1) >= 135ms activates Sticky Weapon Wheel */
     psr_mapper_handle_key(&m, 48, true);
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 12; i++) {
         psr_mapper_tick(&m, 16.0f);
     }
     assert(m.pad.buttons[PSR_BTN_L1] == 1);
@@ -156,6 +170,23 @@ static void test_smart_radial_wheel_auto_vehicle_and_cruise(void) {
     psr_mapper_handle_key(&m, 48, false);
     psr_mapper_tick(&m, 8.0f);
     assert(m.rstick_sticky_active == false);
+
+    /* Smart 1-Tap Switch Shoulder: tap 'V' (9) while aiming L2 (59) -> holds DPAD_LEFT 480ms, suppresses SQUARE */
+    psr_mapper_handle_key(&m, 59, true);
+    psr_mapper_tick(&m, 8.0f);
+    assert(m.pad.l2 == 32767);
+    psr_mapper_handle_key(&m, 9, true);
+    psr_mapper_tick(&m, 16.0f);
+    assert(m.pad.buttons[PSR_BTN_DPAD_LEFT] == 1);
+    assert(m.pad.buttons[PSR_BTN_SQUARE] == 0);
+    psr_mapper_handle_key(&m, 9, false);
+    psr_mapper_tick(&m, 200.0f);
+    assert(m.pad.buttons[PSR_BTN_DPAD_LEFT] == 1); /* Still held cleanly across 480ms */
+    for (int i = 0; i < 20; i++) {
+        psr_mapper_tick(&m, 20.0f);
+    }
+    assert(m.pad.buttons[PSR_BTN_DPAD_LEFT] == 0);
+    psr_mapper_handle_key(&m, 59, false);
 
     /* 'E' (14) sends Triangle WITHOUT flipping vehicle_mode */
     psr_mapper_handle_key(&m, 14, true);
@@ -244,29 +275,37 @@ static void test_aircraft_mode_controls(void) {
     assert(psr_mapper_handle_key(&m, 31, false));
     assert(m.aircraft_mode == true && m.vehicle_mode == false);
 
-    /* W (13) = R2 throttle, Q (12) = L1 rudder, UpArrow (126) = pitch forward/nose down (-LY), A (0) = smooth roll left (-LX) */
+    /* Official GTA 6 Aircraft controls:
+     * W (13) = R2 throttle, Q (12) = SQUARE (Yaw Left), E (14) = CIRCLE (Yaw Right),
+     * UpArrow (126) = pitch forward (-LY), LeftArrow (123) = smooth roll left (-LX). */
     psr_mapper_handle_key(&m, 13, true);
     psr_mapper_handle_key(&m, 12, true);
     psr_mapper_handle_key(&m, 126, true);
-    psr_mapper_handle_key(&m, 0, true);
+    psr_mapper_handle_key(&m, 123, true);
     psr_mapper_tick(&m, 8.0f);
     assert(m.pad.r2 == 32767);
-    assert(m.pad.buttons[PSR_BTN_L1] == 1);
+    assert(m.pad.buttons[PSR_BTN_SQUARE] == 1);
     assert(m.pad.lx < 0 && m.pad.lx > -12000);
     assert(m.pad.ly < 0 && m.pad.ly > -12000);
 
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 30; i++) {
         psr_mapper_tick(&m, 8.0f);
     }
     assert(m.pad.lx < -32000);
     assert(m.pad.ly < -32000);
+    psr_mapper_handle_key(&m, 12, false);
+    psr_mapper_handle_key(&m, 126, false);
+    psr_mapper_handle_key(&m, 123, false);
 
-    /* Space (49) = Fire Cross, R (15) = Landing Gear L3 */
+    /* E (14) = CIRCLE (Yaw Right), Space (49) = R1 (Shoot), R (15) = L3 (Undercarriage) */
+    psr_mapper_handle_key(&m, 14, true);
     psr_mapper_handle_key(&m, 49, true);
     psr_mapper_handle_key(&m, 15, true);
     psr_mapper_tick(&m, 8.0f);
-    assert(m.pad.buttons[PSR_BTN_CROSS] == 1);
+    assert(m.pad.buttons[PSR_BTN_CIRCLE] == 1);
+    assert(m.pad.buttons[PSR_BTN_R1] == 1);
     assert(m.pad.buttons[PSR_BTN_L3] == 1);
+    psr_mapper_handle_key(&m, 14, false);
     psr_mapper_handle_key(&m, 49, false);
     psr_mapper_handle_key(&m, 15, false);
 
@@ -357,8 +396,10 @@ static void test_two_finger_scroll_touchpad_swipe_and_sniper_zoom(void) {
     assert(m.pad.touch_active == false);
     assert(m.pad.buttons[PSR_BTN_DPAD_UP] == 1);
 
-    /* Pulse ends cleanly after 70ms and releases on the following tick */
-    psr_mapper_tick(&m, 80.0f);
+    /* Pulse ends cleanly after 140ms and releases on the following tick */
+    for (int i = 0; i < 4; i++) {
+        psr_mapper_tick(&m, 40.0f);
+    }
     assert(m.scroll_pulse_ms == 0.0f);
     psr_mapper_tick(&m, 16.0f);
     assert(m.pad.buttons[PSR_BTN_DPAD_UP] == 0);

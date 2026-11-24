@@ -159,10 +159,11 @@ typedef struct {
     float swipe_end_y;
     float swipe_cooldown_ms;
 
-    /* Synthetic D-Pad zoom pulse (2-finger scroll while aiming L2) */
+    /* Synthetic D-Pad zoom pulse (2-finger scroll while aiming L2) & 1-tap Switch Shoulder (V while aiming) */
     int scroll_pulse_btn;
     float scroll_pulse_ms;
     float scroll_zoom_cooldown_ms;
+    float shoulder_pulse_ms;
 
     PsrPadState pad;
 } PsrMapper;
