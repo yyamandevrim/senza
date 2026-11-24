@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build native DualSense bridges & DualMac.app
+      - name: Build native DualSense bridges & Senza.app
         run: make build app
 
       - name: Run C & Python unit tests
@@ -20,9 +20,9 @@ jobs:
 
       - name: Verify CLI dry-run
         run: |
-          chmod +x bin/dualmac
-          ./bin/dualmac --version
-          ./bin/dualmac start --dry-run
+          chmod +x bin/senza
+          ./bin/senza --version
+          ./bin/senza start --dry-run
 
       - name: Setup Node.js for Raycast extension
         uses: actions/setup-node@v4

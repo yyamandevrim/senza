@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-STATE_DIR = Path.home() / ".local" / "share" / "dualmac"
+STATE_DIR = Path.home() / ".local" / "share" / "senza"
 BYPASS_STATE_FILE = STATE_DIR / "bypass_state.json"
 
 CLEAN_DNS_SERVERS: tuple[str, ...] = ("1.1.1.1", "1.0.0.1")

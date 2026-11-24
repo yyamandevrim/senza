@@ -103,18 +103,18 @@ enum SessionPhase: Equatable {
 
 // MARK: - CLI Discovery
 
-struct DualMacCLI {
+struct SenzaCLI {
     static func resolve() -> (executable: URL, workingDir: URL)? {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
         var candidates: [String] = []
 
-        if let repoRoot = Bundle.main.infoDictionary?["DualMacRepoRoot"] as? String, !repoRoot.isEmpty {
-            candidates.append((repoRoot as NSString).appendingPathComponent("bin/dualmac"))
+        if let repoRoot = Bundle.main.infoDictionary?["SenzaRepoRoot"] as? String, !repoRoot.isEmpty {
+            candidates.append((repoRoot as NSString).appendingPathComponent("bin/senza"))
         }
-        candidates.append("\(home)/.local/bin/dualmac")
-        candidates.append("/opt/homebrew/bin/dualmac")
-        candidates.append("/usr/local/bin/dualmac")
+        candidates.append("\(home)/.local/bin/senza")
+        candidates.append("/opt/homebrew/bin/senza")
+        candidates.append("/usr/local/bin/senza")
 
         for path in candidates {
             if fm.isExecutableFile(atPath: path) {
@@ -128,7 +128,7 @@ struct DualMacCLI {
     }
 
     static func appIconImage() -> NSImage? {
-        if let icnsURL = Bundle.main.url(forResource: "DualMac", withExtension: "icns"),
+        if let icnsURL = Bundle.main.url(forResource: "Senza", withExtension: "icns"),
            let img = NSImage(contentsOf: icnsURL) {
             return img
         }
@@ -139,15 +139,15 @@ struct DualMacCLI {
 // MARK: - Controller
 
 @MainActor
-final class DualMacController: ObservableObject {
-    static let shared = DualMacController()
+final class SenzaController: ObservableObject {
+    static let shared = SenzaController()
 
-    @AppStorage("dualmac.inputMode") var inputModeRaw: String = InputMode.kbm.rawValue
-    @AppStorage("dualmac.client") var clientRaw: String = ClientKind.sony.rawValue
-    @AppStorage("dualmac.preset") var presetRaw: String = StreamPresetOption.auto.rawValue
-    @AppStorage("dualmac.privileged") var privileged: Bool = true
-    @AppStorage("dualmac.firewall") var firewallRaw: String = FirewallMode.off.rawValue
-    @AppStorage("dualmac.host") var probeHost: String = "1.1.1.1"
+    @AppStorage("senza.inputMode") var inputModeRaw: String = InputMode.kbm.rawValue
+    @AppStorage("senza.client") var clientRaw: String = ClientKind.sony.rawValue
+    @AppStorage("senza.preset") var presetRaw: String = StreamPresetOption.auto.rawValue
+    @AppStorage("senza.privileged") var privileged: Bool = true
+    @AppStorage("senza.firewall") var firewallRaw: String = FirewallMode.off.rawValue
+    @AppStorage("senza.host") var probeHost: String = "1.1.1.1"
 
     @Published var phase: SessionPhase = .idle
     @Published var statusNote: String = "Ready to connect"
@@ -198,8 +198,8 @@ final class DualMacController: ObservableObject {
 
     func refreshDoctor() {
         guard !doctorLoading else { return }
-        guard let cli = DualMacCLI.resolve() else {
-            errorMessage = "DualMac CLI not found. Run `make install` in the repository first."
+        guard let cli = SenzaCLI.resolve() else {
+            errorMessage = "Senza CLI not found. Run `make install` in the repository first."
             return
         }
         doctorLoading = true
@@ -243,8 +243,8 @@ final class DualMacController: ObservableObject {
             bringActiveClientToFront()
             return
         }
-        guard let cli = DualMacCLI.resolve() else {
-            errorMessage = "DualMac CLI not found. Run `make install` first."
+        guard let cli = SenzaCLI.resolve() else {
+            errorMessage = "Senza CLI not found. Run `make install` first."
             return
         }
 
@@ -272,13 +272,13 @@ final class DualMacController: ObservableObject {
         }
 
         var env = Self.baseEnv()
-        env["DUALMAC_GUI_MANAGED"] = "1"
+        env["SENZA_GUI_MANAGED"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
         if let win = mainWindow {
             let f = win.frame
             let cx = Int(f.midX.rounded())
             let cy = Int(f.midY.rounded())
-            env["DUALMAC_TARGET_CENTER"] = "\(cx),\(cy)"
+            env["SENZA_TARGET_CENTER"] = "\(cx),\(cy)"
         }
 
         let proc = Process()
@@ -331,7 +331,7 @@ final class DualMacController: ObservableObject {
             launcherProcess = proc
         } catch {
             setPhase(.idle)
-            errorMessage = "Failed to launch DualMac CLI: \(error.localizedDescription)"
+            errorMessage = "Failed to launch Senza CLI: \(error.localizedDescription)"
             statusNote = "Launch failed"
         }
     }
@@ -373,7 +373,7 @@ final class DualMacController: ObservableObject {
     }
 
     /// Hands foreground focus directly to the spawned Remote Play / chiaki-ng PID using macOS 14+ Cooperative Activation,
-    /// then smoothly collapses the DualMac loader window into the menu bar.
+    /// then smoothly collapses the Senza loader window into the menu bar.
     private func performSandwichHandoff(pid: Int32) {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -458,7 +458,7 @@ final class DualMacController: ObservableObject {
     }
 
     func runRestoreSystem() {
-        guard let cli = DualMacCLI.resolve() else { return }
+        guard let cli = SenzaCLI.resolve() else { return }
         setPhase(.restoring("Restoring awdl0, DNS & sysctl…"))
         statusNote = "Running system restore…"
 
@@ -533,8 +533,8 @@ struct VisualEffectBackground: NSViewRepresentable {
 
 // MARK: - SwiftUI Views
 
-struct DualMacRootView: View {
-    @ObservedObject var ctrl: DualMacController
+struct SenzaRootView: View {
+    @ObservedObject var ctrl: SenzaController
 
     private let sapphire = Color(red: 0.04, green: 0.52, blue: 1.0)
 
@@ -577,7 +577,7 @@ struct DualMacRootView: View {
 
     private var headerRow: some View {
         HStack(spacing: 12) {
-            if let img = DualMacCLI.appIconImage() {
+            if let img = SenzaCLI.appIconImage() {
                 Image(nsImage: img)
                     .resizable()
                     .interpolation(.high)
@@ -587,7 +587,7 @@ struct DualMacRootView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 7) {
-                    Text("DualMac")
+                    Text("Senza")
                         .font(.system(size: 19, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white)
                     Text("GTA 6")
@@ -1024,14 +1024,14 @@ struct ControlsCheatSheetView: View {
 // MARK: - AppDelegate (Sandwich Window + Menu Bar Status Item)
 
 @MainActor
-final class DualMacAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
-    private let ctrl = DualMacController.shared
+    private let ctrl = SenzaController.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        if let img = DualMacCLI.appIconImage() {
+        if let img = SenzaCLI.appIconImage() {
             NSApp.applicationIconImage = img
         }
 
@@ -1075,14 +1075,14 @@ final class DualMacAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     private func setupMainWindow() {
-        let hosting = NSHostingController(rootView: DualMacRootView(ctrl: ctrl))
+        let hosting = NSHostingController(rootView: SenzaRootView(ctrl: ctrl))
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 456, height: 590),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        win.title = "DualMac"
+        win.title = "Senza"
         win.titleVisibility = .hidden
         win.titlebarAppearsTransparent = true
         win.isMovableByWindowBackground = true
@@ -1113,7 +1113,7 @@ final class DualMacAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             default:
                 symbolName = "gamecontroller"
             }
-            let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: "DualMac")
+            let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Senza")
             img?.isTemplate = true
             button.image = img
         }
@@ -1131,7 +1131,7 @@ final class DualMacAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             focusItem.target = self
             menu.addItem(focusItem)
 
-            let showItem = NSMenuItem(title: "Show DualMac Launcher", action: #selector(menuShowWindow), keyEquivalent: "d")
+            let showItem = NSMenuItem(title: "Show Senza Launcher", action: #selector(menuShowWindow), keyEquivalent: "d")
             showItem.target = self
             menu.addItem(showItem)
 
@@ -1150,7 +1150,7 @@ final class DualMacAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             header.isEnabled = false
             menu.addItem(header)
             menu.addItem(.separator())
-            let showItem = NSMenuItem(title: "Show DualMac", action: #selector(menuShowWindow), keyEquivalent: "")
+            let showItem = NSMenuItem(title: "Show Senza", action: #selector(menuShowWindow), keyEquivalent: "")
             showItem.target = self
             menu.addItem(showItem)
 
@@ -1159,7 +1159,7 @@ final class DualMacAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             launchItem.target = self
             menu.addItem(launchItem)
 
-            let showItem = NSMenuItem(title: "Open DualMac Window", action: #selector(menuShowWindow), keyEquivalent: "")
+            let showItem = NSMenuItem(title: "Open Senza Window", action: #selector(menuShowWindow), keyEquivalent: "")
             showItem.target = self
             menu.addItem(showItem)
 
@@ -1169,7 +1169,7 @@ final class DualMacAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         }
 
         menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "Quit DualMac", action: #selector(menuQuit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit Senza", action: #selector(menuQuit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
@@ -1208,10 +1208,10 @@ final class DualMacAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 }
 
 @main
-struct DualMacEntry {
+struct SenzaEntry {
     static func main() {
         let app = NSApplication.shared
-        let delegate = DualMacAppDelegate()
+        let delegate = SenzaAppDelegate()
         app.delegate = delegate
         app.run()
     }

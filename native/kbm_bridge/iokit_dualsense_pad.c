@@ -96,16 +96,16 @@ static void ensure_initialized(void) {
     g_cf_vid_src = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &vid_src);
 
     PsrConfig cfg;
-    const char *cfg_path = getenv("DUALMAC_PROFILE_CFG");
+    const char *cfg_path = getenv("SENZA_PROFILE_CFG");
     if (cfg_path && psr_config_load_file(cfg_path, &cfg)) {
-        fprintf(stderr, "[dualmac-sony] Loaded profile: %s\n", cfg_path);
+        fprintf(stderr, "[senza-sony] Loaded profile: %s\n", cfg_path);
     } else {
         psr_config_init_default(&cfg);
-        fprintf(stderr, "[dualmac-sony] Using built-in GTA 6 MacBook Trackpad profile\n");
+        fprintf(stderr, "[senza-sony] Using built-in GTA 6 MacBook Trackpad profile\n");
     }
     psr_mapper_init(&g_mapper, &cfg);
 
-    const char *disable_tap = getenv("DUALMAC_DISABLE_EVENT_TAP");
+    const char *disable_tap = getenv("SENZA_DISABLE_EVENT_TAP");
     if (!disable_tap || strcmp(disable_tap, "1") != 0) {
         psr_capture_start(&g_mapper);
     }
@@ -254,7 +254,7 @@ static void start_report_timer_if_ready(void) {
         &ctx
     );
     CFRunLoopAddTimer(rl, g_timer, kCFRunLoopCommonModes);
-    fprintf(stderr, "[dualmac-sony] Virtual USB DualSense 125Hz report stream active!\n");
+    fprintf(stderr, "[senza-sony] Virtual USB DualSense 125Hz report stream active!\n");
     fflush(stderr);
 }
 
@@ -264,7 +264,7 @@ static void announce_virtual_device_if_ready(void) {
 
     CFRunLoopRef rl = g_manager_rl;
     CFRunLoopPerformBlock(rl, kCFRunLoopCommonModes, ^{
-        fprintf(stderr, "[dualmac-sony] Announcing Virtual USB DualSense (054C:0CE6) to RemotePlay.app\n");
+        fprintf(stderr, "[senza-sony] Announcing Virtual USB DualSense (054C:0CE6) to RemotePlay.app\n");
         fflush(stderr);
         if (g_match_cb) {
             g_match_cb(g_match_ctx, kIOReturnSuccess, (void *)g_manager, g_fake_device);

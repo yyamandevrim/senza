@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="${1:-$ROOT_DIR/build/DualMac.app}"
+APP_DIR="${1:-$ROOT_DIR/build/Senza.app}"
 ICON_PNG="$ROOT_DIR/assets/icon.png"
-ICONSET_DIR="$ROOT_DIR/build/DualMac.iconset"
-SWIFT_SRC="$ROOT_DIR/native/gui/DualMacApp.swift"
+ICONSET_DIR="$ROOT_DIR/build/Senza.iconset"
+SWIFT_SRC="$ROOT_DIR/native/gui/SenzaApp.swift"
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
@@ -23,7 +23,7 @@ if [[ -f "$ICON_PNG" ]] && command -v sips >/dev/null 2>&1 && command -v iconuti
       cp "$ICON_PNG" "$ICONSET_DIR/icon_${sz}x${sz}@2x.png"
     fi
   done
-  iconutil -c icns "$ICONSET_DIR" -o "$APP_DIR/Contents/Resources/DualMac.icns"
+  iconutil -c icns "$ICONSET_DIR" -o "$APP_DIR/Contents/Resources/Senza.icns"
   rm -rf "$ICONSET_DIR"
 fi
 
@@ -36,24 +36,24 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>DualMac</string>
+  <string>Senza</string>
   <key>CFBundleExecutable</key>
-  <string>DualMac</string>
+  <string>Senza</string>
   <key>CFBundleIconFile</key>
-  <string>DualMac.icns</string>
+  <string>Senza.icns</string>
   <key>CFBundleIdentifier</key>
-  <string>com.yyamandevrim.dualmac</string>
+  <string>com.yyamandevrim.senza</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>DualMac</string>
+  <string>Senza</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.1.0</string>
+  <string>1.2.0</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
-  <key>DualMacRepoRoot</key>
+  <string>3</string>
+  <key>SenzaRepoRoot</key>
   <string>${ROOT_DIR}</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
@@ -63,7 +63,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-# 3. Compile native SwiftUI + AppKit DualMac GUI binary
+# 3. Compile native SwiftUI + AppKit Senza GUI binary
 ARCH="$(uname -m)"
 swiftc \
   -O \
@@ -72,8 +72,8 @@ swiftc \
   -framework AppKit \
   -framework SwiftUI \
   "$SWIFT_SRC" \
-  -o "$APP_DIR/Contents/MacOS/DualMac"
+  -o "$APP_DIR/Contents/MacOS/Senza"
 
-chmod +x "$APP_DIR/Contents/MacOS/DualMac"
+chmod +x "$APP_DIR/Contents/MacOS/Senza"
 codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
 echo "Built native macOS GUI app bundle: $APP_DIR"

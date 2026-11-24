@@ -1,5 +1,5 @@
-#ifndef DUALMAC_MAPPER_CORE_H
-#define DUALMAC_MAPPER_CORE_H
+#ifndef SENZA_MAPPER_CORE_H
+#define SENZA_MAPPER_CORE_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -184,4 +184,4 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms);
 }
 #endif
 
-#endif /* DUALMAC_MAPPER_CORE_H */
+#endif /* SENZA_MAPPER_CORE_H */

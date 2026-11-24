@@ -112,7 +112,7 @@ def probe_network(
             if report.is_wifi:
                 report.warnings.append(
                     "awdl0 (AirDrop/Handoff) is active on Wi-Fi — causes 30-100ms lag spikes. "
-                    "Use `dualmac start --privileged` to pause awdl0 during play."
+                    "Use `senza start --privileged` to pause awdl0 during play."
                 )
     except (subprocess.TimeoutExpired, OSError):
         pass

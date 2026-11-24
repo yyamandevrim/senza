@@ -4,7 +4,7 @@ import { runRestore } from "./lib";
 export default async function RestoreSystemCommand() {
   try {
     const output = await runRestore(false);
-    await showHUD(`DualMac Restore: ${output.split("\n")[0]}`);
+    await showHUD(`Senza Restore: ${output.split("\n")[0]}`);
   } catch (e) {
     await showToast({
       style: Toast.Style.Failure,

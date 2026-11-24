@@ -1,4 +1,4 @@
-"""Allow running `python3 -m dualmac`."""
+"""Allow running `python3 -m senza`."""
 
 from .cli import main
 

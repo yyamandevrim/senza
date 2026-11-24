@@ -8,7 +8,7 @@
 /* eslint-disable @typescript-eslint/ban-types */
 
 type ExtensionPreferences = {
-  /** DualMac Directory (Optional) - Leave empty if installed via `make install` (~/.local/bin/dualmac), or pick your cloned dualmac folder */
+  /** Senza Directory (Optional) - Leave empty if installed via `make install` (~/.local/bin/senza), or pick your cloned senza folder */
   "projectDir": string,
   /** Home PS5 / WAN Probe Host - Optional home IP or DDNS hostname for latency/jitter probing (default: 1.1.1.1) */
   "homeHost": string,

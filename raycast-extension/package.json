@@ -1,7 +1,7 @@
 {
   "$schema": "https://www.raycast.com/schemas/extension.json",
-  "name": "dualmac",
-  "title": "DualMac",
+  "name": "senza",
+  "title": "Senza",
   "description": "Zero-permission Virtual DualSense bridge, MacBook Trackpad + Keyboard GTA 6 Smart Pack, and WAN stream optimizer for PS5 Remote Play on macOS",
   "icon": "icon.png",
   "author": "yyamandevrim",
@@ -15,8 +15,8 @@
       "name": "projectDir",
       "type": "directory",
       "required": false,
-      "title": "DualMac Directory (Optional)",
-      "description": "Leave empty if installed via `make install` (~/.local/bin/dualmac), or pick your cloned dualmac folder",
+      "title": "Senza Directory (Optional)",
+      "description": "Leave empty if installed via `make install` (~/.local/bin/senza), or pick your cloned senza folder",
       "default": ""
     },
     {
@@ -39,7 +39,7 @@
   "commands": [
     {
       "name": "play-gta6",
-      "title": "Play GTA 6 (DualMac)",
+      "title": "Play GTA 6 (Senza)",
       "description": "Choose Sony Remote Play or chiaki-ng preset, view MacBook Trackpad controls, and launch",
       "mode": "view"
     },
@@ -51,13 +51,13 @@
     },
     {
       "name": "network-doctor",
-      "title": "DualMac Network Doctor",
+      "title": "Senza Network Doctor",
       "description": "Inspect WAN ping, jitter, packet loss, PSN firewall reachability, and macOS AWDL Wi-Fi spikes",
       "mode": "view"
     },
     {
       "name": "restore-system",
-      "title": "DualMac Restore System",
+      "title": "Senza Restore System",
       "description": "Restore awdl0/llw0, DNS/VPN, kernel UDP buffers, and chiaki-ng preferences after a session",
       "mode": "no-view"
     }

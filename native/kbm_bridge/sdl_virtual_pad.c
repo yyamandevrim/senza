@@ -87,7 +87,7 @@ static void init_bridge_on_sdl_thread(void) {
 
     if (!p_SDL_WasInit || !p_SDL_JoystickAttachVirtual || !p_SDL_JoystickOpen ||
         !p_SDL_JoystickSetVirtualAxis || !p_SDL_JoystickSetVirtualButton) {
-        fprintf(stderr, "[dualmac-chiaki] ERROR: Required SDL2 virtual joystick symbols not found.\n");
+        fprintf(stderr, "[senza-chiaki] ERROR: Required SDL2 virtual joystick symbols not found.\n");
         g_failed = true;
         return;
     }
@@ -97,12 +97,12 @@ static void init_bridge_on_sdl_thread(void) {
     }
 
     PsrConfig cfg;
-    const char *cfg_path = getenv("DUALMAC_PROFILE_CFG");
+    const char *cfg_path = getenv("SENZA_PROFILE_CFG");
     if (cfg_path && psr_config_load_file(cfg_path, &cfg)) {
-        fprintf(stderr, "[dualmac-chiaki] Loaded profile: %s\n", cfg_path);
+        fprintf(stderr, "[senza-chiaki] Loaded profile: %s\n", cfg_path);
     } else {
         psr_config_init_default(&cfg);
-        fprintf(stderr, "[dualmac-chiaki] Using built-in GTA 6 default profile\n");
+        fprintf(stderr, "[senza-chiaki] Using built-in GTA 6 default profile\n");
     }
     psr_mapper_init(&g_mapper, &cfg);
 
@@ -113,14 +113,14 @@ static void init_bridge_on_sdl_thread(void) {
         0
     );
     if (dev_index < 0) {
-        fprintf(stderr, "[dualmac-chiaki] ERROR: SDL_JoystickAttachVirtual failed (%d)\n", dev_index);
+        fprintf(stderr, "[senza-chiaki] ERROR: SDL_JoystickAttachVirtual failed (%d)\n", dev_index);
         g_failed = true;
         return;
     }
 
     g_vjoy = p_SDL_JoystickOpen(dev_index);
     if (!g_vjoy) {
-        fprintf(stderr, "[dualmac-chiaki] ERROR: SDL_JoystickOpen(%d) failed\n", dev_index);
+        fprintf(stderr, "[senza-chiaki] ERROR: SDL_JoystickOpen(%d) failed\n", dev_index);
         g_failed = true;
         return;
     }
@@ -129,14 +129,14 @@ static void init_bridge_on_sdl_thread(void) {
     p_SDL_JoystickSetVirtualAxis(g_vjoy, PSR_SDL_AXIS_TRIGGERLEFT, -32768);
     p_SDL_JoystickSetVirtualAxis(g_vjoy, PSR_SDL_AXIS_TRIGGERRIGHT, -32768);
 
-    const char *disable_tap = getenv("DUALMAC_DISABLE_EVENT_TAP");
+    const char *disable_tap = getenv("SENZA_DISABLE_EVENT_TAP");
     if (!disable_tap || strcmp(disable_tap, "1") != 0) {
         psr_capture_start(&g_mapper);
     }
 
     g_last_tick_ns = now_ns();
     g_initialized = true;
-    fprintf(stderr, "[dualmac-chiaki] Virtual DualSense attached (SDL device index %d)\n", dev_index);
+    fprintf(stderr, "[senza-chiaki] Virtual DualSense attached (SDL device index %d)\n", dev_index);
     fflush(stderr);
 }
 

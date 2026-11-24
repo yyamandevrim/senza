@@ -1,4 +1,4 @@
-"""Focused unit tests for DualMac WAN probe, adaptive stream presets, profiles, and rollback."""
+"""Focused unit tests for Senza WAN probe, adaptive stream presets, profiles, and rollback."""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dualmac.net_probe import NetworkReport, parse_ping_output
-from dualmac.profiles import export_runtime_config, load_profile
-from dualmac.stream_profile import apply_stream_preset, recommend_preset
-from dualmac.sys_optimizer import SystemOptimizer
+from senza.net_probe import NetworkReport, parse_ping_output
+from senza.profiles import export_runtime_config, load_profile
+from senza.stream_profile import apply_stream_preset, recommend_preset
+from senza.sys_optimizer import SystemOptimizer
 
 
-class TestDualMac(unittest.TestCase):
+class TestSenza(unittest.TestCase):
     def test_parse_ping_and_recommend_presets(self) -> None:
         sample = "\n".join(
             [
@@ -111,7 +111,7 @@ class TestDualMac(unittest.TestCase):
             self.assertFalse(state_file.exists())
 
     def test_firewall_bypass_dns_and_rollback(self) -> None:
-        from dualmac.firewall_bypass import FirewallBypass
+        from senza.firewall_bypass import FirewallBypass
 
         calls: list[list[str]] = []
 

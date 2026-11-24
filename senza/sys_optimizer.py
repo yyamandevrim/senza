@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-STATE_DIR = Path.home() / ".local" / "share" / "dualmac"
+STATE_DIR = Path.home() / ".local" / "share" / "senza"
 STATE_FILE = STATE_DIR / "runtime_state.json"
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]

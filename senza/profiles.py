@@ -1,4 +1,4 @@
-"""Profile loading, validation, and runtime config export for DualMac native DualSense bridges."""
+"""Profile loading, validation, and runtime config export for Senza native DualSense bridges."""
 
 from __future__ import annotations
 

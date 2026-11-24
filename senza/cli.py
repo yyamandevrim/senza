@@ -1,4 +1,4 @@
-"""CLI entry point for DualMac (setup, doctor, start, restore) supporting Sony RemotePlay & chiaki-ng."""
+"""CLI entry point for Senza (setup, doctor, start, restore) supporting Sony RemotePlay & chiaki-ng."""
 
 from __future__ import annotations
 
@@ -94,14 +94,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"  Bypass backends   : {', '.join(backends)}")
 
     print("\n=== Installation Check ===")
-    print(f"  Sony RemotePlay   : {sony or 'NOT FOUND'} ({'ready' if PATCHED_SONY_APP.exists() else 'run `dualmac setup`'})")
-    print(f"  chiaki-ng         : {chiaki or 'NOT FOUND'} ({'ready' if PATCHED_APP.exists() else 'run `dualmac setup`'})")
+    print(f"  Sony RemotePlay   : {sony or 'NOT FOUND'} ({'ready' if PATCHED_SONY_APP.exists() else 'run `senza setup`'})")
+    print(f"  chiaki-ng         : {chiaki or 'NOT FOUND'} ({'ready' if PATCHED_APP.exists() else 'run `senza setup`'})")
     print("  Input capture     : Cocoa in-process NSEvent monitor (zero macOS permissions required)")
     return 0
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
-    print("1/3 Compiling DualMac native Trackpad+Keyboard DualSense bridges (Sony + chiaki-ng)...")
+    print("1/3 Compiling Senza native Trackpad+Keyboard DualSense bridges (Sony + chiaki-ng)...")
     sony_dylib = ensure_dylib_built(client="sony", force=args.force)
     chiaki_dylib = ensure_dylib_built(client="chiaki", force=args.force)
     print(f"    Built: {sony_dylib}")
@@ -133,7 +133,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
         print("ERROR: Neither Sony RemotePlay.app nor chiaki-ng.app found in /Applications.")
         return 1
 
-    print("\nSetup complete! Launch via Raycast or `dualmac start --client sony` (or `--client chiaki`).")
+    print("\nSetup complete! Launch via Raycast or `senza start --client sony` (or `--client chiaki`).")
     return 0
 
 
@@ -260,10 +260,10 @@ def cmd_restore(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="dualmac",
-        description="DualMac — Virtual DualSense Trackpad+Keyboard bridge & WAN optimizer for PS5 Remote Play on macOS",
+        prog="senza",
+        description="Senza — Virtual DualSense Trackpad+Keyboard bridge & WAN optimizer for PS5 Remote Play on macOS",
     )
-    p.add_argument("-V", "--version", action="version", version=f"DualMac {__version__}")
+    p.add_argument("-V", "--version", action="version", version=f"Senza {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
     p_doc = sub.add_parser("doctor", help="Measure WAN latency/jitter/loss and check macOS & client readiness")

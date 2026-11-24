@@ -48,19 +48,19 @@ export interface DoctorResult {
   patched_bundle_ready: boolean;
 }
 
-function resolveDualMacCli(projectDirPref?: string): { cliPath: string; cwd: string } {
+function resolveSenzaCli(projectDirPref?: string): { cliPath: string; cwd: string } {
   const home = process.env.HOME || os.homedir();
   const candidates: string[] = [];
 
   if (projectDirPref && projectDirPref.trim().length > 0) {
     const expanded = projectDirPref.trim().replace(/^~/, home);
-    candidates.push(path.join(expanded, "bin", "dualmac"));
+    candidates.push(path.join(expanded, "bin", "senza"));
   }
 
   candidates.push(
-    path.join(home, ".local", "bin", "dualmac"),
-    "/opt/homebrew/bin/dualmac",
-    "/usr/local/bin/dualmac"
+    path.join(home, ".local", "bin", "senza"),
+    "/opt/homebrew/bin/senza",
+    "/usr/local/bin/senza"
   );
 
   for (const cand of candidates) {
@@ -71,13 +71,13 @@ function resolveDualMacCli(projectDirPref?: string): { cliPath: string; cwd: str
     }
   }
 
-  const fallback = candidates[0] || path.join(home, ".local", "bin", "dualmac");
+  const fallback = candidates[0] || path.join(home, ".local", "bin", "senza");
   return { cliPath: fallback, cwd: home };
 }
 
 export function getCliContext() {
   const prefs = getPreferenceValues<Preferences>();
-  const { cliPath, cwd } = resolveDualMacCli(prefs.projectDir);
+  const { cliPath, cwd } = resolveSenzaCli(prefs.projectDir);
   const host = (prefs.homeHost || "1.1.1.1").trim() || "1.1.1.1";
   const home = process.env.HOME || os.homedir();
   const env = {
@@ -90,7 +90,7 @@ export function getCliContext() {
 export async function runDoctor(): Promise<DoctorResult> {
   const { cliPath, cwd, host, env } = getCliContext();
   if (!fs.existsSync(cliPath)) {
-    throw new Error(`DualMac CLI not found at ${cliPath}. Run \`make install\` in your DualMac folder first.`);
+    throw new Error(`Senza CLI not found at ${cliPath}. Run \`make install\` in your Senza folder first.`);
   }
   const { stdout } = await execFileAsync(cliPath, ["doctor", "--host", host, "--json"], {
     cwd,
@@ -109,13 +109,13 @@ export async function launchGta6(
   if (!fs.existsSync(cliPath)) {
     await showToast({
       style: Toast.Style.Failure,
-      title: "DualMac CLI not found",
-      message: "Run `make install` in your DualMac directory or set the folder in preferences.",
+      title: "Senza CLI not found",
+      message: "Run `make install` in your Senza directory or set the folder in preferences.",
     });
     return;
   }
 
-  const logDir = path.join(process.env.HOME || os.homedir(), ".local", "share", "dualmac");
+  const logDir = path.join(process.env.HOME || os.homedir(), ".local", "share", "senza");
   fs.mkdirSync(logDir, { recursive: true });
   const logFd = fs.openSync(path.join(logDir, "raycast-launch.log"), "a");
 
@@ -137,8 +137,8 @@ export async function launchGta6(
   await closeMainWindow();
   await showHUD(
     privileged
-      ? `DualMac [${label} + AWDL Fix] — Capture: '0' · Aim: CapsLock/Ctrl · Car: G · Air: O`
-      : `DualMac [${label}] — Capture: '0' · Aim: CapsLock/Ctrl · Car: G · Air: O`
+      ? `Senza [${label} + AWDL Fix] — Capture: '0' · Aim: CapsLock/Ctrl · Car: G · Air: O`
+      : `Senza [${label}] — Capture: '0' · Aim: CapsLock/Ctrl · Car: G · Air: O`
   );
 }
 

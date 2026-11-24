@@ -1,5 +1,5 @@
-#ifndef DUALMAC_MACOS_CAPTURE_H
-#define DUALMAC_MACOS_CAPTURE_H
+#ifndef SENZA_MACOS_CAPTURE_H
+#define SENZA_MACOS_CAPTURE_H
 
 #include "mapper_core.h"
 #include <stdbool.h>
@@ -35,4 +35,4 @@ void psr_capture_on_dualsense_feedback(const PsrDualSenseFeedback *fb);
 }
 #endif
 
-#endif /* DUALMAC_MACOS_CAPTURE_H */
+#endif /* SENZA_MACOS_CAPTURE_H */

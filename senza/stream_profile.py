@@ -10,7 +10,7 @@ from typing import Callable
 from .net_probe import NetworkReport
 
 CHIAKI_DOMAIN = "com.chiaki.Chiaki"
-STATE_DIR = Path.home() / ".local" / "share" / "dualmac"
+STATE_DIR = Path.home() / ".local" / "share" / "senza"
 PLIST_BACKUP_PATH = STATE_DIR / "com.chiaki.Chiaki.backup.plist"
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
@@ -96,7 +96,7 @@ def build_defaults_commands(preset: StreamPreset, disable_builtin_kbm: bool = Tr
         ("NSAppSleepDisabled", "-bool", "YES"),
     ]
     if disable_builtin_kbm:
-        # Prevent chiaki-ng built-in keyboard/mouse-touchpad from fighting libdualmac_chiaki.dylib
+        # Prevent chiaki-ng built-in keyboard/mouse-touchpad from fighting libsenza_chiaki.dylib
         writes.append(("settings.keyboard_enabled", "-bool", "NO"))
         writes.append(("settings.mouse_touch_enabled", "-bool", "NO"))
 
@@ -109,7 +109,7 @@ def backup_chiaki_plist(
 ) -> bool:
     backup_path.parent.mkdir(parents=True, exist_ok=True)
     if backup_path.exists():
-        return True  # Preserve original pre-DualMac backup
+        return True  # Preserve original pre-Senza backup
     res = runner(["defaults", "export", CHIAKI_DOMAIN, str(backup_path)])
     return res.returncode == 0
 

@@ -13,17 +13,17 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BUILD_CHIAKI_DYLIB = REPO_ROOT / "build" / "libdualmac_chiaki.dylib"
-BUILD_SONY_DYLIB = REPO_ROOT / "build" / "libdualmac_sony.dylib"
+BUILD_CHIAKI_DYLIB = REPO_ROOT / "build" / "libsenza_chiaki.dylib"
+BUILD_SONY_DYLIB = REPO_ROOT / "build" / "libsenza_sony.dylib"
 ICON_PNG_PATH = REPO_ROOT / "assets" / "icon.png"
-STATE_DIR = Path.home() / ".local" / "share" / "dualmac"
+STATE_DIR = Path.home() / ".local" / "share" / "senza"
 
 PATCHED_APP = STATE_DIR / "chiaki-ng-patched.app"
 CHIAKI_STAMP_FILE = STATE_DIR / "chiaki-ng-source.stamp"
 
 PATCHED_SONY_APP = STATE_DIR / "RemotePlay-patched.app"
 SONY_STAMP_FILE = STATE_DIR / "remoteplay-source.stamp"
-CACHED_ICNS_PATH = STATE_DIR / "DualMac.icns"
+CACHED_ICNS_PATH = STATE_DIR / "Senza.icns"
 
 CHIAKI_SEARCH_PATHS = (
     Path("/Applications/chiaki-ng.app"),
@@ -77,15 +77,15 @@ def ensure_dylib_built(client: str = "chiaki", force: bool = False) -> Path:
     return target
 
 
-def _ensure_dualmac_icns() -> Path | None:
-    """Build and cache DualMac.icns from assets/icon.png using built-in sips + iconutil."""
+def _ensure_senza_icns() -> Path | None:
+    """Build and cache Senza.icns from assets/icon.png using built-in sips + iconutil."""
     if not ICON_PNG_PATH.is_file():
         return None
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     if CACHED_ICNS_PATH.is_file() and CACHED_ICNS_PATH.stat().st_mtime >= ICON_PNG_PATH.stat().st_mtime:
         return CACHED_ICNS_PATH
 
-    iconset_dir = STATE_DIR / "DualMac.iconset"
+    iconset_dir = STATE_DIR / "Senza.iconset"
     if iconset_dir.exists():
         shutil.rmtree(iconset_dir)
     iconset_dir.mkdir(parents=True, exist_ok=True)
@@ -118,8 +118,8 @@ def _ensure_dualmac_icns() -> Path | None:
 
 
 def _brand_patched_bundle(patched: Path) -> None:
-    """Apply DualMac's Apple Pro icon and display name to the local ad-hoc patched bundle."""
-    icns = _ensure_dualmac_icns()
+    """Apply Senza's Apple Pro icon and display name to the local ad-hoc patched bundle."""
+    icns = _ensure_senza_icns()
     resources = patched / "Contents" / "Resources"
     info_plist = patched / "Contents" / "Info.plist"
     if not info_plist.is_file():
@@ -128,10 +128,10 @@ def _brand_patched_bundle(patched: Path) -> None:
         with info_plist.open("rb") as f:
             plist = plistlib.load(f)
         if icns is not None and resources.is_dir():
-            shutil.copy2(icns, resources / "DualMac.icns")
-            plist["CFBundleIconFile"] = "DualMac.icns"
+            shutil.copy2(icns, resources / "Senza.icns")
+            plist["CFBundleIconFile"] = "Senza.icns"
             plist.pop("CFBundleIconName", None)
-        plist["CFBundleDisplayName"] = "DualMac"
+        plist["CFBundleDisplayName"] = "Senza"
         with info_plist.open("wb") as f:
             plistlib.dump(plist, f)
     except Exception:
@@ -189,21 +189,21 @@ def build_launch_env(
     env["DYLD_INSERT_LIBRARIES"] = (
         f"{dylib_path}:{existing_dyld}" if existing_dyld else str(dylib_path)
     )
-    env["DUALMAC_PROFILE_CFG"] = str(runtime_cfg_path)
+    env["SENZA_PROFILE_CFG"] = str(runtime_cfg_path)
     if profile_json_path is not None:
-        env["DUALMAC_PROFILE_JSON"] = str(profile_json_path)
+        env["SENZA_PROFILE_JSON"] = str(profile_json_path)
     if ping_host:
-        env["DUALMAC_PING_HOST"] = ping_host
+        env["SENZA_PING_HOST"] = ping_host
     if ICON_PNG_PATH.is_file():
-        env["DUALMAC_ICON_PATH"] = str(ICON_PNG_PATH)
+        env["SENZA_ICON_PATH"] = str(ICON_PNG_PATH)
     env["SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS"] = "1"
     return env
 
 
 def _activate_running_app_async(proc: subprocess.Popen[bytes], app_bundle: Path) -> None:
     """Bring the newly spawned app to the foreground once LaunchServices registers its window (zero permissions)."""
-    if os.environ.get("DUALMAC_GUI_MANAGED") == "1":
-        # DualMac.app handles native Cooperative Activation (yieldActivation) directly.
+    if os.environ.get("SENZA_GUI_MANAGED") == "1":
+        # Senza.app handles native Cooperative Activation (yieldActivation) directly.
         return
 
     def _worker() -> None:
@@ -255,7 +255,7 @@ def _activate_running_app_async(proc: subprocess.Popen[bytes], app_bundle: Path)
         except Exception:
             pass
 
-    threading.Thread(target=_worker, name="dualmac-frontmost", daemon=True).start()
+    threading.Thread(target=_worker, name="senza-frontmost", daemon=True).start()
 
 
 def launch_client(

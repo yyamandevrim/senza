@@ -49,7 +49,7 @@ export default function NetworkDoctorCommand() {
   const fwMd = fw ? `\n\n### PSN & Firewall\n${fw.diagnosis}` : "";
 
   const markdown = data
-    ? `## DualMac WAN & macOS Diagnostics\n\nRecommended preset: **${preset?.name}** (\`${preset?.resolution} @ ${preset?.fps}fps · ${preset?.bitrate_kbps} kbps · ${preset?.codec}\`)\n\n${warningsMd}${fwMd}`
+    ? `## Senza WAN & macOS Diagnostics\n\nRecommended preset: **${preset?.name}** (\`${preset?.resolution} @ ${preset?.fps}fps · ${preset?.bitrate_kbps} kbps · ${preset?.codec}\`)\n\n${warningsMd}${fwMd}`
     : "### Measuring WAN RTT, jitter, PSN firewall reachability, and macOS Wi-Fi AWDL...";
 
   return (
@@ -92,11 +92,11 @@ export default function NetworkDoctorCommand() {
             <Detail.Metadata.Separator />
             <Detail.Metadata.Label
               title="Sony RemotePlay"
-              text={data.sony_app ? (data.sony_bundle_ready ? "Ready" : "Run `dualmac setup`") : "Not Installed"}
+              text={data.sony_app ? (data.sony_bundle_ready ? "Ready" : "Run `senza setup`") : "Not Installed"}
             />
             <Detail.Metadata.Label
               title="chiaki-ng"
-              text={data.chiaki_app ? (data.patched_bundle_ready ? "Ready" : "Run `dualmac setup`") : "Not Installed"}
+              text={data.chiaki_app ? (data.patched_bundle_ready ? "Ready" : "Run `senza setup`") : "Not Installed"}
             />
           </Detail.Metadata>
         ) : undefined

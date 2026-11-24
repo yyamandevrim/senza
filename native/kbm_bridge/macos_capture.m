@@ -94,9 +94,9 @@ static BOOL is_trackable_app_window(NSWindow *win) {
     return YES;
 }
 
-static void apply_dualmac_branding_on_main(void) {
+static void apply_senza_branding_on_main(void) {
     if (NSApp == nil) return;
-    const char *icon_env = getenv("DUALMAC_ICON_PATH");
+    const char *icon_env = getenv("SENZA_ICON_PATH");
     if (icon_env && icon_env[0] != '\0') {
         NSString *path = [NSString stringWithUTF8String:icon_env];
         NSImage *img = [[NSImage alloc] initWithContentsOfFile:path];
@@ -112,7 +112,7 @@ static void position_window_at_target_center_if_needed(NSWindow *win) {
         g_applied_target_center = YES;
         return;
     }
-    const char *center_env = getenv("DUALMAC_TARGET_CENTER");
+    const char *center_env = getenv("SENZA_TARGET_CENTER");
     if (!center_env || center_env[0] == '\0') {
         g_applied_target_center = YES;
         return;
@@ -217,7 +217,7 @@ static NSScreen *active_screen_on_main(void) {
 /* ==================== Live Sensitivity Auto-Save ==================== */
 
 static void persist_sensitivity_async(float new_sens) {
-    const char *json_env = getenv("DUALMAC_PROFILE_JSON");
+    const char *json_env = getenv("SENZA_PROFILE_JSON");
     if (!json_env || json_env[0] == '\0') return;
     NSString *jsonPath = [NSString stringWithUTF8String:json_env];
     double rounded = round((double)new_sens * 100.0) / 100.0;
@@ -262,7 +262,7 @@ static bool check_awdl_is_up(void) {
 }
 
 static void sanitize_ping_host(char *out, size_t out_sz) {
-    const char *env = getenv("DUALMAC_PING_HOST");
+    const char *env = getenv("SENZA_PING_HOST");
     if (!env || env[0] == '\0') {
         snprintf(out, out_sz, "1.1.1.1");
         return;
@@ -399,7 +399,7 @@ static void set_net_visible_on_main(BOOL visible) {
             pthread_create(&g_net_thread, NULL, net_telemetry_thread, NULL);
             pthread_detach(g_net_thread);
         }
-        fprintf(stderr, "[dualmac] Live Ping/AWDL pill ON  (top-left, press ';' to hide)\n");
+        fprintf(stderr, "[senza] Live Ping/AWDL pill ON  (top-left, press ';' to hide)\n");
         fflush(stderr);
     } else {
         atomic_store(&g_net_visible, false);
@@ -718,12 +718,12 @@ static void set_hud_visible_on_main(BOOL visible, bool capture_active, int mode_
         rebuild_hud_content_on_main(capture_active, mode_id, smart_mode);
         [g_hud_panel orderFrontRegardless];
         g_hud_visible = YES;
-        fprintf(stderr, "[dualmac] Compact HUD ON  (top-right, press 'H' to hide)\n");
+        fprintf(stderr, "[senza] Compact HUD ON  (top-right, press 'H' to hide)\n");
         fflush(stderr);
     } else if (g_hud_panel != nil && g_hud_visible) {
         [g_hud_panel orderOut:nil];
         g_hud_visible = NO;
-        fprintf(stderr, "[dualmac] Compact HUD OFF\n");
+        fprintf(stderr, "[senza] Compact HUD OFF\n");
         fflush(stderr);
     }
 }
@@ -736,12 +736,12 @@ static void apply_cursor_lock_locked(bool lock) {
         CGAssociateMouseAndMouseCursorPosition(false);
         CGDisplayHideCursor(CGMainDisplayID());
         atomic_store(&g_cursor_locked, true);
-        fprintf(stderr, "[dualmac] Capture ON  ('0'=Release, 'G'=Car, 'O'=Aircraft, 'T'=Smart, ';'=Ping, 'H'=HUD)\n");
+        fprintf(stderr, "[senza] Capture ON  ('0'=Release, 'G'=Car, 'O'=Aircraft, 'T'=Smart, ';'=Ping, 'H'=HUD)\n");
     } else {
         CGAssociateMouseAndMouseCursorPosition(true);
         CGDisplayShowCursor(CGMainDisplayID());
         atomic_store(&g_cursor_locked, false);
-        fprintf(stderr, "[dualmac] Capture OFF (cursor released)\n");
+        fprintf(stderr, "[senza] Capture OFF (cursor released)\n");
     }
     fflush(stderr);
 }
@@ -916,12 +916,12 @@ static NSEvent *handle_local_nsevent(NSEvent *event) {
     }
     if (now_mode != was_mode) {
         const char *mode_name = now_mode == 2 ? "AIRCRAFT" : (now_mode == 1 ? "VEHICLE" : "ON-FOOT");
-        fprintf(stderr, "[dualmac] Mode (%s): %s\n", mode_was_auto ? "Smart-F" : "Manual", mode_name);
+        fprintf(stderr, "[senza] Mode (%s): %s\n", mode_was_auto ? "Smart-F" : "Manual", mode_name);
         fflush(stderr);
         mode_changed = true;
     }
     if (now_smart != was_smart) {
-        fprintf(stderr, "[dualmac] Smart Mode: %s\n", now_smart ? "ON" : "OFF");
+        fprintf(stderr, "[senza] Smart Mode: %s\n", now_smart ? "ON" : "OFF");
         fflush(stderr);
         smart_changed = true;
     }
@@ -1073,8 +1073,8 @@ static void install_cocoa_monitors_on_main(void) {
             }
         }];
 
-        /* Apply DualMac icon & bring newly launched app / Remote Play windows to front */
-        apply_dualmac_branding_on_main();
+        /* Apply Senza icon & bring newly launched app / Remote Play windows to front */
+        apply_senza_branding_on_main();
         bring_window_to_front_on_main(nil);
         check_new_windows_and_focus_on_main();
         if (g_window_watch_timer == nil) {
@@ -1095,7 +1095,7 @@ static void install_cocoa_monitors_on_main(void) {
             dispatch_resume(g_window_watch_timer);
         }
 
-        fprintf(stderr, "[dualmac] Ready (GTA 6 Smart Pack)! '0'=Toggle, 'G'=Car, 'O'=Aircraft, 'T'=Smart, ';'=Ping, 'H'=HUD.\n");
+        fprintf(stderr, "[senza] Ready (GTA 6 Smart Pack)! '0'=Toggle, 'G'=Car, 'O'=Aircraft, 'T'=Smart, ';'=Ping, 'H'=HUD.\n");
         fflush(stderr);
     }
 }

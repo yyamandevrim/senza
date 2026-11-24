@@ -1,10 +1,10 @@
 CC := clang
 BUILD_DIR := build
 NATIVE_DIR := native/kbm_bridge
-CHIAKI_DYLIB := $(BUILD_DIR)/libdualmac_chiaki.dylib
-SONY_DYLIB := $(BUILD_DIR)/libdualmac_sony.dylib
+CHIAKI_DYLIB := $(BUILD_DIR)/libsenza_chiaki.dylib
+SONY_DYLIB := $(BUILD_DIR)/libsenza_sony.dylib
 TEST_BIN := $(BUILD_DIR)/test_mapper_core
-APP_BUNDLE := $(BUILD_DIR)/DualMac.app
+APP_BUNDLE := $(BUILD_DIR)/Senza.app
 PREFIX ?= $(HOME)/.local
 BIN_DIR := $(PREFIX)/bin
 
@@ -60,20 +60,20 @@ app: build
 
 install: build app
 	mkdir -p "$(BIN_DIR)"
-	chmod +x "$(CURDIR)/bin/dualmac"
-	ln -sf "$(CURDIR)/bin/dualmac" "$(BIN_DIR)/dualmac"
-	@echo "Installed CLI: $(BIN_DIR)/dualmac -> $(CURDIR)/bin/dualmac"
+	chmod +x "$(CURDIR)/bin/senza"
+	ln -sf "$(CURDIR)/bin/senza" "$(BIN_DIR)/senza"
+	@echo "Installed CLI: $(BIN_DIR)/senza -> $(CURDIR)/bin/senza"
 	@echo "App launcher : $(CURDIR)/$(APP_BUNDLE)"
-	@echo 'Next step    : dualmac setup  (or "make install-app" to copy DualMac.app to /Applications)'
+	@echo 'Next step    : senza setup  (or "make install-app" to copy Senza.app to /Applications)'
 
 install-app: app
-	rm -rf "/Applications/DualMac.app"
-	cp -R "$(APP_BUNDLE)" "/Applications/DualMac.app"
-	@echo "Installed GUI app: /Applications/DualMac.app"
+	rm -rf "/Applications/Senza.app"
+	cp -R "$(APP_BUNDLE)" "/Applications/Senza.app"
+	@echo "Installed GUI app: /Applications/Senza.app"
 
 uninstall:
-	rm -f "$(BIN_DIR)/dualmac"
-	@echo "Removed $(BIN_DIR)/dualmac"
+	rm -f "$(BIN_DIR)/senza"
+	@echo "Removed $(BIN_DIR)/senza"
 
 $(TEST_BIN): $(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c tests/test_mapper_core.c
 	mkdir -p $(BUILD_DIR)
