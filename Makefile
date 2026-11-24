@@ -10,7 +10,7 @@ BIN_DIR := $(PREFIX)/bin
 
 CFLAGS := -O2 -Wall -Wextra -std=c11 -I$(NATIVE_DIR)
 OBJCFLAGS := -O2 -Wall -Wextra -fobjc-arc -I$(NATIVE_DIR)
-FRAMEWORKS := -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices -framework Cocoa -framework QuartzCore
+FRAMEWORKS := -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices -framework Cocoa -framework QuartzCore -framework GameController -framework CoreHaptics
 SONY_FRAMEWORKS := $(FRAMEWORKS) -framework IOKit
 
 .PHONY: all build app install install-app uninstall test test-c test-py clean

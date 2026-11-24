@@ -140,6 +140,29 @@ class TestSenza(unittest.TestCase):
             self.assertIn("networksetup -setdnsservers Wi-Fi empty", joined_all)
             self.assertFalse(state_file.exists())
 
+    def test_hybrid_mode_env_and_cli_export_profile(self) -> None:
+        from senza.app_bridge import build_launch_env
+        from senza.cli import build_parser, cmd_export_profile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out_cfg = Path(tmp) / "runtime_profile.cfg"
+            env = build_launch_env(
+                Path("/tmp/libsenza_sony.dylib"),
+                out_cfg,
+                start_hybrid=True,
+            )
+            self.assertEqual(env.get("SENZA_START_HYBRID"), "1")
+
+            parser = build_parser()
+            args = parser.parse_args(["export-profile", "--profile", "gta6", "--output", str(out_cfg), "--json"])
+            rc = cmd_export_profile(args)
+            self.assertEqual(rc, 0)
+            self.assertTrue(out_cfg.is_file())
+            self.assertIn("sensitivity=", out_cfg.read_text(encoding="utf-8"))
+
+            start_args = parser.parse_args(["start", "--hybrid", "--dry-run"])
+            self.assertTrue(start_args.hybrid)
+
 
 if __name__ == "__main__":
     unittest.main()

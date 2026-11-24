@@ -139,7 +139,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
-    use_kbm = not args.controller
+    start_hybrid = bool(getattr(args, "hybrid", False))
+    use_kbm = start_hybrid or (not args.controller)
     client = args.client
     runtime_cfg: Path | None = None
     profile_json_path: Path | None = None
@@ -164,7 +165,12 @@ def cmd_start(args: argparse.Namespace) -> int:
             for c in cmds:
                 print(f"  [dry-run] {' '.join(c)}")
     else:
-        mode_desc = "Virtual USB DualSense 054C:0CE6 bridge" if use_kbm else "Native Physical Controller mode (no virtual pad)"
+        if start_hybrid:
+            mode_desc = "Hybrid DualSense + Trackpad Hot-Swap & Shared HUD (054C:0CE6)"
+        elif use_kbm:
+            mode_desc = "Virtual USB DualSense 054C:0CE6 bridge"
+        else:
+            mode_desc = "Native Physical Controller mode (no virtual pad)"
         print(f"Client: Official Sony PS Remote Play ({mode_desc})")
 
     if use_kbm:
@@ -185,7 +191,12 @@ def cmd_start(args: argparse.Namespace) -> int:
             for note in fb.enter():
                 print(f"  {note}")
         print(f"  [dry-run] client: {client}")
-        print(f"  [dry-run] input mode: {'Trackpad+Keyboard KBM' if use_kbm else 'Physical Controller (native)'}")
+        input_desc = (
+            "Hybrid (Physical DualSense + Trackpad Hot-Swap + Shared HUD)"
+            if start_hybrid
+            else ("Trackpad+Keyboard KBM" if use_kbm else "Physical Controller (native)")
+        )
+        print(f"  [dry-run] input mode: {input_desc}")
         if runtime_cfg:
             print(f"  [dry-run] profile exported to {runtime_cfg}")
         if dylib:
@@ -199,7 +210,10 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     target_app = prepare_patched_app(source_app, client=client, force=False) if use_kbm else source_app
 
-    if use_kbm:
+    if start_hybrid:
+        print(f"\nStarting macOS optimizations & {client} in Hybrid Hot-Swap mode (DualSense + Trackpad + Shared HUD)...")
+        print("Hot-Swap: Touch DualSense anytime | '0'=Trackpad+Keys | ';'=Live Ping | '['=PS5 Mic Mute | 'H'=HUD\n")
+    elif use_kbm:
         print(f"\nStarting macOS optimizations & {client} with MacBook Trackpad + Keyboard GTA 6 Smart Pack...")
         print("Controls: '0'=Capture | 'G'=Vehicle | 'O'=Aircraft | 'T'=Smart | 'U/I/Y/L'=Assists | '-/='=Sens | ';'=Ping | 'H'=HUD\n")
     else:
@@ -230,6 +244,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             inject_kbm=use_kbm,
             profile_json_path=profile_json_path,
             ping_host=args.host,
+            start_hybrid=start_hybrid,
         )
         real_pid = resolve_launched_pid(proc, client=client, used_open=(not use_kbm))
         label = "Sony RemotePlay" if client == "sony" else "chiaki-ng"
@@ -243,6 +258,18 @@ def cmd_start(args: argparse.Namespace) -> int:
                 print(f"  [cleanup] {note}")
         for note in optimizer.exit():
             print(f"  [cleanup] {note}")
+
+
+def cmd_export_profile(args: argparse.Namespace) -> int:
+    """Validate a JSON profile and export runtime_profile.cfg (triggers live hot-reload in running sessions)."""
+    out_path = Path(args.output).expanduser() if args.output else (STATE_DIR / "runtime_profile.cfg")
+    profile = load_profile(args.profile)
+    exported = export_runtime_config(profile, out_path)
+    if args.json:
+        print(json.dumps({"ok": True, "profile": args.profile, "runtime_cfg": str(exported)}))
+    else:
+        print(f"Exported runtime profile '{args.profile}' -> {exported}")
+    return 0
 
 
 def cmd_restore(args: argparse.Namespace) -> int:
@@ -307,12 +334,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional Tailscale exit node (IP or hostname) when using --bypass-firewall tailscale/auto",
     )
+    p_start.add_argument("--hybrid", action="store_true", help="Hybrid Hot-Swap mode: start on physical DualSense with shared Ping/HUD/Mic shortcuts and instant '0' Trackpad switch")
     p_start.add_argument("--controller", "--no-kbm", dest="controller", action="store_true", help="Use physical DualSense/controller natively (keep WAN/macOS optimizations, skip virtual KBM pad)")
     p_start.add_argument("--keep-chiaki-kbm", action="store_true", help="Do not disable chiaki-ng built-in keyboard/mouse-touch")
     p_start.add_argument("--chiaki-app", default=None, help="Custom path to chiaki-ng.app")
     p_start.add_argument("--sony-app", default=None, help="Custom path to Sony RemotePlay.app")
     p_start.add_argument("--dry-run", action="store_true", help="Show planned actions without modifying system or launching")
     p_start.set_defaults(func=cmd_start)
+
+    p_exp = sub.add_parser("export-profile", help="Validate JSON profile and write runtime_profile.cfg for live hot-reload")
+    p_exp.add_argument("--profile", default="gta6", help="Profile name in profiles/ or path to JSON (default: gta6)")
+    p_exp.add_argument("--output", default=None, help="Optional custom output path (default: ~/.local/share/senza/runtime_profile.cfg)")
+    p_exp.add_argument("--json", action="store_true", help="Emit JSON confirmation")
+    p_exp.set_defaults(func=cmd_export_profile)
 
     p_rest = sub.add_parser("restore", help="Recover awdl0/llw0, DNS, VPN/WARP, and sysctl settings after a crash (optional --plist)")
     p_rest.add_argument("--plist", action="store_true", help="Also restore backed-up com.chiaki.Chiaki preferences")

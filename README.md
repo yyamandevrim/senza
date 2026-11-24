@@ -34,8 +34,10 @@ Engineered specifically for playing **GTA 6** smoothly on a MacBook over WAN or 
   - **Precision Sniper Aim (`CapsLock + Z`)**: Extra `0.45×` precision multiplier stacked on top of ADS (`0.50×`).
   - **Force Touch Trackpad Haptics & DualSense Lightbar HUD**: Translates live PS5 rumble packets into MacBook Force Touch haptic feedback and mirrors PS5 lightbar colors (including police red/blue flash) onto a subtle translucent window border.
   - **Unobtrusive Floating HUDs**: Compact top-right mode pill (`H`), top-left live **Ping / Jitter / Loss / AWDL** telemetry pill (`;`, 0% CPU when hidden), and single-key PS5 Mic Mute (`[`).
+- **Physical DualSense + Trackpad Hybrid Hot-Swap & Shared HUD** — Pick up a physical DualSense mid-session (via `GameController.framework` + `CoreHaptics` rumble & `GCDeviceLight` RGB, zero permissions) and Senza seamlessly hot-swaps control without restarting Remote Play while keeping the live top-left Ping/Jitter/AWDL pill (`;`), PS5 Mic Mute (`[`), and compact HUD (`H`) active. Press `0` anytime to snap right back to Trackpad + Keys.
+- **Visual Sensitivity & Keybind Studio (`Senza.app`)** — Edit `profiles/gta6.json` visually with a live Aim / ADS / Sniper / Deadzone response-curve graph, interactive click-to-rebind key/mouse recorder across On-Foot, Vehicle, Aircraft & Smart Hotkeys, and **Save & Live Hot-Reload** directly into a running Remote Play session.
 - **WAN Stream & macOS Network Optimizer** — Eliminates 30–100 ms macOS Wi-Fi lag spikes via an active `awdl0`/`llw0` watchdog, boosts kernel UDP receive buffers (`net.inet.udp.recvspace`), prevents App Nap / display sleep, and supports PSN/UDP firewall bypass (`--bypass-firewall`: Clean DNS `1.1.1.1`, Cloudflare WARP, Tailscale exit-node, or macOS VPN) with guaranteed rollback on exit.
-- **Native SwiftUI `Senza.app` & Sandwich Handoff** — Launch from Spotlight or the Dock with live Ping/Jitter/AWDL telemetry, mode cards (`Trackpad + Keys` vs `DualSense`), one-click launch that hands focus straight to PS Remote Play via macOS Cooperative Activation (`yieldActivation`) at the exact same window position, collapses cleanly into a macOS Menu Bar status item, and restores automatically when your session ends. Also includes a bundled **Raycast Extension** (`raycast-extension/`).
+- **Native SwiftUI `Senza.app` & Sandwich Handoff** — Launch from Spotlight or the Dock with live Ping/Jitter/AWDL telemetry, 3 mode cards (**Trackpad** · **Hybrid** · **Native Pad**), one-click launch that hands focus straight to PS Remote Play via macOS Cooperative Activation (`yieldActivation`) at the exact same window position, collapses cleanly into a macOS Menu Bar status item, and restores automatically when your session ends. Also includes a bundled **Raycast Extension** (`raycast-extension/`).
 
 ---
 
@@ -86,7 +88,10 @@ senza start
 # Launch with Wi-Fi AWDL lag-spike fix & kernel UDP boost (Touch ID / sudo)
 senza start --privileged --gui-sudo
 
-# Launch with physical DualSense controller (keeps macOS & WAN optimizations, skips virtual KBM)
+# Launch in Hybrid Hot-Swap mode (physical DualSense + Shared Ping/HUD/Mic + instant '0' Trackpad switch)
+senza start --hybrid --privileged --gui-sudo
+
+# Launch with pure native physical DualSense (no virtual bridge, keeps macOS & WAN optimizations)
 senza start --controller --privileged
 
 # Launch chiaki-ng with automatic WAN bitrate/resolution optimization

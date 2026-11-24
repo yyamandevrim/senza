@@ -183,6 +183,7 @@ def build_launch_env(
     runtime_cfg_path: Path,
     profile_json_path: Path | None = None,
     ping_host: str | None = None,
+    start_hybrid: bool = False,
 ) -> dict[str, str]:
     env = os.environ.copy()
     existing_dyld = env.get("DYLD_INSERT_LIBRARIES", "")
@@ -194,6 +195,8 @@ def build_launch_env(
         env["SENZA_PROFILE_JSON"] = str(profile_json_path)
     if ping_host:
         env["SENZA_PING_HOST"] = ping_host
+    if start_hybrid:
+        env["SENZA_START_HYBRID"] = "1"
     if ICON_PNG_PATH.is_file():
         env["SENZA_ICON_PATH"] = str(ICON_PNG_PATH)
     env["SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS"] = "1"
@@ -290,6 +293,7 @@ def launch_client(
     inject_kbm: bool = True,
     profile_json_path: Path | None = None,
     ping_host: str | None = None,
+    start_hybrid: bool = False,
 ) -> subprocess.Popen[bytes]:
     if client == "sony":
         subprocess.run(
@@ -305,6 +309,7 @@ def launch_client(
             runtime_cfg_path,
             profile_json_path=profile_json_path,
             ping_host=ping_host,
+            start_hybrid=start_hybrid,
         )
         proc = subprocess.Popen([str(binary)], env=env)
         _activate_running_app_async(proc, app_bundle)

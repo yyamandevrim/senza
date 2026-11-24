@@ -1,7 +1,10 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreHaptics/CoreHaptics.h>
+#import <GameController/GameController.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include "config_loader.h"
 #include "macos_capture.h"
 
 #include <ctype.h>
@@ -14,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define PSR_HUD_KEY_H 4           /* macOS virtual keycode for 'H' */
@@ -28,6 +32,24 @@ static atomic_bool g_app_active = true;
 static id g_local_monitor = nil;
 static id g_resign_observer = nil;
 static id g_become_observer = nil;
+
+/* Physical DualSense Hybrid Hot-Swap state (GameController + CoreHaptics, zero permissions) */
+static pthread_mutex_t g_phys_lock = PTHREAD_MUTEX_INITIALIZER;
+static GCController *g_phys_controller = nil;
+static CHHapticEngine *g_phys_haptic_left = nil;
+static CHHapticEngine *g_phys_haptic_right = nil;
+static id g_phys_connect_obs = nil;
+static id g_phys_disconnect_obs = nil;
+static atomic_bool g_phys_connected = false;
+static atomic_int g_input_source = 0; /* 0 = Trackpad + Keys, 1 = Physical DualSense */
+static bool g_phys_touch_was_down = false;
+static uint8_t g_phys_touch_id = 0;
+static uint64_t g_last_phys_rumble_ns = 0;
+static float g_phys_mic_pulse_ms = 0.0f;
+
+/* Live runtime profile hot-reload tracker */
+static time_t g_cfg_last_mtime = 0;
+static int g_cfg_watch_tick = 0;
 
 static mach_timebase_info_data_t g_cap_timebase = {0, 0};
 static uint64_t g_last_haptic_ns = 0;
@@ -60,6 +82,7 @@ static BOOL g_hud_visible = NO;
 static int g_hud_last_mode = 0; /* 0=on-foot, 1=vehicle, 2=aircraft */
 static BOOL g_hud_last_capture = NO;
 static BOOL g_hud_last_smart = YES;
+static int g_hud_last_source = 0; /* 0=Trackpad+Keys, 1=Physical DualSense */
 
 /* Micro top-center status pill (auto-fades in 1.6s on toggles/adjustments) */
 static PsrHudPanel *g_toast_panel = nil;
@@ -541,11 +564,330 @@ static void apply_lightbar_border_on_main(uint8_t r, uint8_t g, uint8_t b) {
     }
 }
 
+/* ==================== Physical DualSense Hybrid Bridge & Profile Hot-Reload ==================== */
+
+static int16_t phys_float_to_axis(float v) {
+    if (v > 1.0f) v = 1.0f;
+    if (v < -1.0f) v = -1.0f;
+    if (v >= 0.0f) return (int16_t)lroundf(v * 32767.0f);
+    return (int16_t)lroundf(v * 32768.0f);
+}
+
+static int16_t phys_float_to_trigger(float v) {
+    if (v <= 0.0f) return 0;
+    if (v >= 1.0f) return 32767;
+    return (int16_t)lroundf(v * 32767.0f);
+}
+
+static void stop_phys_haptics_locked(void) {
+    if (g_phys_haptic_left != nil) {
+        [g_phys_haptic_left stopWithCompletionHandler:nil];
+        g_phys_haptic_left = nil;
+    }
+    if (g_phys_haptic_right != nil) {
+        [g_phys_haptic_right stopWithCompletionHandler:nil];
+        g_phys_haptic_right = nil;
+    }
+}
+
+static void attach_phys_controller_locked(GCController *ctrl) {
+    if (g_phys_controller == ctrl) return;
+    stop_phys_haptics_locked();
+    g_phys_controller = ctrl;
+    g_phys_touch_was_down = false;
+    atomic_store(&g_phys_connected, ctrl != nil);
+}
+
+static void rebuild_hud_content_on_main(bool capture_active, int mode_id, bool smart_mode);
+
+static void refresh_phys_controllers_on_main(bool announce_toast) {
+    NSArray<GCController *> *all = [GCController controllers];
+    GCController *chosen = nil;
+    for (GCController *c in all) {
+        if ([c.extendedGamepad isKindOfClass:[GCDualSenseGamepad class]]) {
+            chosen = c;
+            break;
+        }
+    }
+    if (chosen == nil) {
+        for (GCController *c in all) {
+            if (c.extendedGamepad != nil) {
+                chosen = c;
+                break;
+            }
+        }
+    }
+
+    bool changed = false;
+    bool now_connected = (chosen != nil);
+    NSString *ctrlName = chosen.vendorName ?: @"DualSense";
+
+    pthread_mutex_lock(&g_phys_lock);
+    if (g_phys_controller != chosen) {
+        changed = true;
+        attach_phys_controller_locked(chosen);
+    }
+    pthread_mutex_unlock(&g_phys_lock);
+
+    if (!now_connected) {
+        atomic_store(&g_input_source, 0);
+        if (changed && announce_toast) {
+            show_toast_on_main(@"○ DUALSENSE BAĞLANTISI KESİLDİ · [0] Trackpad Modu",
+                               [NSColor colorWithRed:1.0 green:0.74 blue:0.42 alpha:1.0]);
+        }
+        return;
+    }
+
+    const char *start_hybrid = getenv("SENZA_START_HYBRID");
+    bool hybrid_pref = (start_hybrid && strcmp(start_hybrid, "1") == 0);
+
+    bool cap_on = false;
+    int mode_id = 0;
+    bool smart = true;
+    pthread_mutex_lock(&g_lock);
+    if (g_mapper) {
+        cap_on = g_mapper->capture_active;
+        mode_id = current_mode_id(g_mapper->vehicle_mode, g_mapper->aircraft_mode);
+        smart = g_mapper->smart_mode;
+    }
+    pthread_mutex_unlock(&g_lock);
+
+    if (!cap_on && (hybrid_pref || changed)) {
+        atomic_store(&g_input_source, 1);
+    }
+
+    if (changed) {
+        fprintf(stderr, "[senza] Physical controller ready (Hybrid Hot-Swap): %s\n", [ctrlName UTF8String]);
+        fflush(stderr);
+        if (announce_toast) {
+            NSString *msg = [NSString stringWithFormat:@"● %@ BAĞLANDI · Oynat veya [0] Trackpad · [;] Ping", ctrlName];
+            show_toast_on_main(msg, [NSColor colorWithRed:0.44 green:0.96 blue:0.64 alpha:1.0]);
+        }
+        if (g_hud_visible) {
+            rebuild_hud_content_on_main(cap_on, mode_id, smart);
+        }
+    }
+}
+
+static bool sample_physical_dualsense(PsrPadState *out, bool *out_activity) {
+    memset(out, 0, sizeof(*out));
+    if (out_activity) *out_activity = false;
+
+    pthread_mutex_lock(&g_phys_lock);
+    GCController *ctrl = g_phys_controller;
+    if (ctrl == nil || ctrl.extendedGamepad == nil) {
+        pthread_mutex_unlock(&g_phys_lock);
+        return false;
+    }
+
+    GCExtendedGamepad *gp = ctrl.extendedGamepad;
+    float lx = gp.leftThumbstick.xAxis.value;
+    float ly = -gp.leftThumbstick.yAxis.value;   /* GC +Y is up; DualSense USB -Y is up */
+    float rx = gp.rightThumbstick.xAxis.value;
+    float ry = -gp.rightThumbstick.yAxis.value;
+    float l2 = gp.leftTrigger.value;
+    float r2 = gp.rightTrigger.value;
+
+    out->lx = phys_float_to_axis(lx);
+    out->ly = phys_float_to_axis(ly);
+    out->rx = phys_float_to_axis(rx);
+    out->ry = phys_float_to_axis(ry);
+    out->l2 = phys_float_to_trigger(l2);
+    out->r2 = phys_float_to_trigger(r2);
+
+    out->buttons[PSR_BTN_CROSS] = gp.buttonA.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_CIRCLE] = gp.buttonB.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_SQUARE] = gp.buttonX.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_TRIANGLE] = gp.buttonY.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_L1] = gp.leftShoulder.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_R1] = gp.rightShoulder.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_L3] = gp.leftThumbstickButton.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_R3] = gp.rightThumbstickButton.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_DPAD_UP] = gp.dpad.up.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_DPAD_DOWN] = gp.dpad.down.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_DPAD_LEFT] = gp.dpad.left.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_DPAD_RIGHT] = gp.dpad.right.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_SHARE] = gp.buttonOptions.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_OPTIONS] = gp.buttonMenu.isPressed ? 1 : 0;
+    out->buttons[PSR_BTN_PS] = gp.buttonHome.isPressed ? 1 : 0;
+
+    bool touch_down = false;
+    if ([gp isKindOfClass:[GCDualSenseGamepad class]]) {
+        GCDualSenseGamepad *ds = (GCDualSenseGamepad *)gp;
+        out->buttons[PSR_BTN_TOUCHPAD] = ds.touchpadButton.isPressed ? 1 : 0;
+        float tx = ds.touchpadPrimary.xAxis.value;
+        float ty = ds.touchpadPrimary.yAxis.value;
+        if (fabsf(tx) > 0.0005f || fabsf(ty) > 0.0005f) {
+            touch_down = true;
+            if (!g_phys_touch_was_down) {
+                g_phys_touch_id = (uint8_t)((g_phys_touch_id + 1) & 0x7F);
+            }
+            float norm_x = (tx + 1.0f) * 0.5f;
+            float norm_y = (1.0f - ty) * 0.5f;
+            if (norm_x < 0.0f) norm_x = 0.0f;
+            if (norm_x > 1.0f) norm_x = 1.0f;
+            if (norm_y < 0.0f) norm_y = 0.0f;
+            if (norm_y > 1.0f) norm_y = 1.0f;
+            out->touch_active = true;
+            out->touch_id = g_phys_touch_id;
+            out->touch_x = (uint16_t)lroundf(norm_x * 1919.0f);
+            out->touch_y = (uint16_t)lroundf(norm_y * 1079.0f);
+        }
+    }
+    g_phys_touch_was_down = touch_down;
+
+    bool active = (fabsf(lx) > 0.22f || fabsf(ly) > 0.22f ||
+                   fabsf(rx) > 0.22f || fabsf(ry) > 0.22f ||
+                   l2 > 0.15f || r2 > 0.15f || touch_down);
+    if (!active) {
+        for (int i = 0; i < PSR_BTN_COUNT; i++) {
+            if (out->buttons[i]) {
+                active = true;
+                break;
+            }
+        }
+    }
+    if (out_activity) *out_activity = active;
+    pthread_mutex_unlock(&g_phys_lock);
+    return true;
+}
+
+static void play_haptic_pulse_on_engine(CHHapticEngine *engine, float intensity, float sharpness) {
+    if (engine == nil || intensity <= 0.02f) return;
+    NSError *err = nil;
+    CHHapticEventParameter *pInt = [[CHHapticEventParameter alloc]
+        initWithParameterID:CHHapticEventParameterIDHapticIntensity value:intensity];
+    CHHapticEventParameter *pSharp = [[CHHapticEventParameter alloc]
+        initWithParameterID:CHHapticEventParameterIDHapticSharpness value:sharpness];
+    CHHapticEvent *ev = [[CHHapticEvent alloc]
+        initWithEventType:CHHapticEventTypeHapticContinuous
+               parameters:@[pInt, pSharp]
+             relativeTime:0.0
+                 duration:0.075];
+    CHHapticPattern *pat = [[CHHapticPattern alloc] initWithEvents:@[ev] parameters:@[] error:&err];
+    if (err || pat == nil) return;
+    id<CHHapticPatternPlayer> player = [engine createPlayerWithPattern:pat error:&err];
+    if (err || player == nil) return;
+    [player startAtTime:CHHapticTimeImmediate error:&err];
+}
+
+static void forward_phys_rumble_on_main(uint8_t left_val, uint8_t right_val) {
+    if (left_val < 12 && right_val < 12) return;
+    pthread_mutex_lock(&g_phys_lock);
+    GCController *ctrl = g_phys_controller;
+    if (ctrl == nil || ctrl.haptics == nil) {
+        pthread_mutex_unlock(&g_phys_lock);
+        return;
+    }
+    if (left_val >= 12 && g_phys_haptic_left == nil) {
+        g_phys_haptic_left = [ctrl.haptics createEngineWithLocality:GCHapticsLocalityLeftHandle];
+        if (g_phys_haptic_left) {
+            [g_phys_haptic_left startAndReturnError:nil];
+        }
+    }
+    if (right_val >= 12 && g_phys_haptic_right == nil) {
+        g_phys_haptic_right = [ctrl.haptics createEngineWithLocality:GCHapticsLocalityRightHandle];
+        if (g_phys_haptic_right) {
+            [g_phys_haptic_right startAndReturnError:nil];
+        }
+    }
+    CHHapticEngine *eLeft = g_phys_haptic_left;
+    CHHapticEngine *eRight = g_phys_haptic_right;
+    pthread_mutex_unlock(&g_phys_lock);
+
+    if (left_val >= 12) {
+        play_haptic_pulse_on_engine(eLeft, (float)left_val / 255.0f, 0.25f);
+    }
+    if (right_val >= 12) {
+        play_haptic_pulse_on_engine(eRight, (float)right_val / 255.0f, 0.85f);
+    }
+}
+
+static void forward_phys_lightbar_on_main(uint8_t r, uint8_t g, uint8_t b) {
+    pthread_mutex_lock(&g_phys_lock);
+    GCController *ctrl = g_phys_controller;
+    pthread_mutex_unlock(&g_phys_lock);
+    if (ctrl != nil && ctrl.light != nil) {
+        ctrl.light.color = [[GCColor alloc] initWithRed:(float)r / 255.0f
+                                                  green:(float)g / 255.0f
+                                                   blue:(float)b / 255.0f];
+    }
+}
+
+static BOOL is_text_input_focused_on_main(void) {
+    NSResponder *fr = [NSApp keyWindow].firstResponder;
+    if (fr == nil) return NO;
+    if ([fr isKindOfClass:[NSText class]] || [fr isKindOfClass:[NSTextField class]]) {
+        return YES;
+    }
+    return NO;
+}
+
+static void check_profile_hot_reload_on_main(void) {
+    const char *cfg_path = getenv("SENZA_PROFILE_CFG");
+    if (!cfg_path || cfg_path[0] == '\0' || !g_mapper) return;
+
+    struct stat st;
+    if (stat(cfg_path, &st) != 0) return;
+    if (g_cfg_last_mtime == 0) {
+        g_cfg_last_mtime = st.st_mtime;
+        return;
+    }
+    if (st.st_mtime == g_cfg_last_mtime) return;
+    g_cfg_last_mtime = st.st_mtime;
+
+    PsrConfig reloaded;
+    if (!psr_config_load_file(cfg_path, &reloaded)) return;
+
+    pthread_mutex_lock(&g_lock);
+    if (g_mapper) {
+        g_mapper->cfg = reloaded;
+    }
+    pthread_mutex_unlock(&g_lock);
+
+    fprintf(stderr, "[senza] Hot-reloaded profile from %s (sens=%.2f, deadzone=%.2f)\n",
+            cfg_path, reloaded.sensitivity, reloaded.deadzone);
+    fflush(stderr);
+    show_toast_on_main(
+        [NSString stringWithFormat:@"✦ PROFİL GÜNCELLENDİ (Canlı · %.2fx)", reloaded.sensitivity],
+        [NSColor colorWithRed:0.55 green:0.94 blue:1.0 alpha:1.0]
+    );
+}
+
 /* ==================== Compact Top-Right Controls HUD ==================== */
 
 static void rebuild_hud_content_on_main(bool capture_active, int mode_id, bool smart_mode) {
+    int input_source = atomic_load(&g_input_source);
+    BOOL phys_mode = (input_source == 1 && atomic_load(&g_phys_connected));
     NSArray<NSArray<NSString *> *> *rows;
-    if (mode_id == 2) {
+    NSString *physBatteryText = nil;
+    NSString *physCtrlName = @"DUALSENSE";
+
+    if (phys_mode) {
+        pthread_mutex_lock(&g_phys_lock);
+        GCController *ctrl = g_phys_controller;
+        if (ctrl != nil) {
+            if (ctrl.vendorName.length > 0) {
+                physCtrlName = ctrl.vendorName;
+            }
+            if (ctrl.battery != nil && ctrl.battery.batteryLevel >= 0.0f) {
+                int pct = (int)lroundf(ctrl.battery.batteryLevel * 100.0f);
+                NSString *chg = (ctrl.battery.batteryState == GCDeviceBatteryStateCharging) ? @" ⚡" : @"";
+                physBatteryText = [NSString stringWithFormat:@"%d%%%@", pct, chg];
+            }
+        }
+        pthread_mutex_unlock(&g_phys_lock);
+
+        rows = @[
+            @[@"Durum",        physBatteryText ? [NSString stringWithFormat:@"%@ · Pil %@", physCtrlName, physBatteryText]
+                                               : [NSString stringWithFormat:@"%@ · Aktif", physCtrlName]],
+            @[@"0 (Sıfır)",    @"Trackpad + Klavye'ye Anında Geç"],
+            @[@";",            @"Canlı Ping / Jitter / AWDL Göster"],
+            @[@"[",            @"PS5 Mikrofon Sustur (Mic Mute)"],
+            @[@"H",            @"Bu HUD Panelini Gizle / Göster"],
+            @[@"Otomatik",     @"Kola dokununca otomatik DualSense"],
+        ];
+    } else if (mode_id == 2) {
         /* Aircraft / Helicopter Mode */
         rows = @[
             @[@"W / S",          @"Gaz-Yüksel (R2) · İniş (L2)"],
@@ -622,7 +964,9 @@ static void rebuild_hud_content_on_main(bool capture_active, int mode_id, bool s
     /* Compact single-line header */
     NSView *hdr = [[NSView alloc] initWithFrame:NSMakeRect(0, winH - headerH, winW, headerH)];
     hdr.wantsLayer = YES;
-    if (mode_id == 2) {
+    if (phys_mode) {
+        hdr.layer.backgroundColor = [NSColor colorWithRed:0.10 green:0.62 blue:0.42 alpha:0.36].CGColor;
+    } else if (mode_id == 2) {
         hdr.layer.backgroundColor = [NSColor colorWithRed:0.55 green:0.32 blue:0.88 alpha:0.36].CGColor;
     } else if (mode_id == 1) {
         hdr.layer.backgroundColor = [NSColor colorWithRed:0.85 green:0.48 blue:0.12 alpha:0.32].CGColor;
@@ -632,7 +976,9 @@ static void rebuild_hud_content_on_main(bool capture_active, int mode_id, bool s
     [bg addSubview:hdr];
 
     NSString *modeTitle;
-    if (mode_id == 2) {
+    if (phys_mode) {
+        modeTitle = @"DUALSENSE · HİBRİT";
+    } else if (mode_id == 2) {
         modeTitle = smart_mode ? @"UÇAK · ✦AKILLI" : @"UÇAK MODU";
     } else if (mode_id == 1) {
         modeTitle = smart_mode ? @"ARAÇ · ✦AKILLI" : @"ARAÇ MODU";
@@ -649,8 +995,10 @@ static void rebuild_hud_content_on_main(bool capture_active, int mode_id, bool s
     titleLbl.frame = NSMakeRect(10, 6, 158, 15);
     [hdr addSubview:titleLbl];
 
-    NSString *capBadge = capture_active ? @"● AKTİF" : @"○ KAPALI ('0')";
-    NSColor *capColor = capture_active
+    NSString *capBadge = phys_mode
+        ? (physBatteryText ? [NSString stringWithFormat:@"● %@", physBatteryText] : @"● KOL AKTİF")
+        : (capture_active ? @"● AKTİF" : @"○ KAPALI ('0')");
+    NSColor *capColor = (phys_mode || capture_active)
         ? [NSColor colorWithRed:0.42 green:0.96 blue:0.62 alpha:1.0]
         : [NSColor colorWithRed:1.0 green:0.70 blue:0.36 alpha:1.0];
     NSTextField *capLbl = make_label(
@@ -681,7 +1029,9 @@ static void rebuild_hud_content_on_main(bool capture_active, int mode_id, bool s
 
     /* Minimal footer bar */
     NSTextField *footer = make_label(
-        @"0:İmleç · G:Araç · O:Uçak · T:Akıllı · ;:Ping · H:Gizle",
+        phys_mode
+            ? @"0:Trackpad · ;:Ping · [:Mic · H:Gizle"
+            : @"0:İmleç · G:Araç · O:Uçak · T:Akıllı · ;:Ping · H:Gizle",
         [NSFont monospacedSystemFontOfSize:9.0 weight:NSFontWeightMedium],
         [NSColor colorWithRed:1.0 green:0.86 blue:0.48 alpha:0.86],
         NSTextAlignmentCenter
@@ -703,6 +1053,7 @@ static void rebuild_hud_content_on_main(bool capture_active, int mode_id, bool s
     g_hud_last_mode = mode_id;
     g_hud_last_capture = capture_active ? YES : NO;
     g_hud_last_smart = smart_mode ? YES : NO;
+    g_hud_last_source = phys_mode ? 1 : 0;
 
     if (g_has_led_color) {
         apply_lightbar_border_on_main(g_last_led_r, g_last_led_g, g_last_led_b);
@@ -777,6 +1128,11 @@ static NSEvent *handle_local_nsevent(NSEvent *event) {
         return event;
     }
 
+    bool phys_mode_now = (atomic_load(&g_input_source) == 1 && atomic_load(&g_phys_connected));
+    bool text_focused = (type == NSEventTypeKeyDown || type == NSEventTypeKeyUp)
+        ? is_text_input_focused_on_main()
+        : false;
+
     bool consume = false;
     bool toggle_hud_now = false;
     bool toggle_net_now = false;
@@ -804,16 +1160,34 @@ static NSEvent *handle_local_nsevent(NSEvent *event) {
             int keycode = (int)[event keyCode];
             BOOL is_repeat = [event isARepeat];
             bool ctrl_held = (flags & NSEventModifierFlagControl) != 0;
-            /* 'H' toggles HUD while captured; CapsLock(Ctrl)+H also works when capture is OFF */
-            if (keycode == PSR_HUD_KEY_H && (g_mapper->capture_active || ctrl_held)) {
+            bool shared_shortcut_ok = g_mapper->capture_active || ctrl_held || (phys_mode_now && !text_focused);
+            /* 'H' toggles HUD while captured, in Hybrid DualSense mode, or with Ctrl+H */
+            if (keycode == PSR_HUD_KEY_H && shared_shortcut_ok) {
                 if (!is_repeat) toggle_hud_now = true;
                 consume = true;
                 break;
             }
-            /* ';' toggles live Ping/AWDL pill while captured; CapsLock+; works when capture is OFF */
-            if (keycode == PSR_NET_KEY_SEMICOLON && (g_mapper->capture_active || ctrl_held)) {
+            /* ';' toggles live Ping/AWDL pill while captured, in Hybrid DualSense mode, or with Ctrl+; */
+            if (keycode == PSR_NET_KEY_SEMICOLON && shared_shortcut_ok) {
                 if (!is_repeat) toggle_net_now = true;
                 consume = true;
+                break;
+            }
+            /* '[' triggers PS5 Mic Mute even while using physical DualSense in Hybrid mode */
+            if (phys_mode_now && !g_mapper->capture_active && !text_focused &&
+                keycode == g_mapper->cfg.mic_mute_key && g_mapper->cfg.mic_mute_key >= 0) {
+                if (!is_repeat) {
+                    pthread_mutex_lock(&g_phys_lock);
+                    g_phys_mic_pulse_ms = 140.0f;
+                    pthread_mutex_unlock(&g_phys_lock);
+                    mic_tapped = true;
+                }
+                consume = true;
+                break;
+            }
+            /* Avoid triggering '0' toggle while user is typing in PSN login / search box */
+            if (!g_mapper->capture_active && text_focused &&
+                keycode == g_mapper->cfg.toggle_capture_key) {
                 break;
             }
             consume = psr_mapper_handle_key(g_mapper, keycode, true);
@@ -821,7 +1195,13 @@ static NSEvent *handle_local_nsevent(NSEvent *event) {
         }
         case NSEventTypeKeyUp: {
             int keycode = (int)[event keyCode];
-            if ((keycode == PSR_HUD_KEY_H || keycode == PSR_NET_KEY_SEMICOLON) && g_mapper->capture_active) {
+            bool shared_up_ok = g_mapper->capture_active || (phys_mode_now && !text_focused);
+            if ((keycode == PSR_HUD_KEY_H || keycode == PSR_NET_KEY_SEMICOLON) && shared_up_ok) {
+                consume = true;
+                break;
+            }
+            if (phys_mode_now && !g_mapper->capture_active && !text_focused &&
+                keycode == g_mapper->cfg.mic_mute_key && g_mapper->cfg.mic_mute_key >= 0) {
                 consume = true;
                 break;
             }
@@ -913,6 +1293,11 @@ static NSEvent *handle_local_nsevent(NSEvent *event) {
     if (now_capture != was_capture) {
         apply_cursor_lock_locked(now_capture);
         capture_changed = true;
+        if (now_capture) {
+            atomic_store(&g_input_source, 0);
+        } else if (atomic_load(&g_phys_connected)) {
+            atomic_store(&g_input_source, 1);
+        }
     }
     if (now_mode != was_mode) {
         const char *mode_name = now_mode == 2 ? "AIRCRAFT" : (now_mode == 1 ? "VEHICLE" : "ON-FOOT");
@@ -940,6 +1325,8 @@ static NSEvent *handle_local_nsevent(NSEvent *event) {
         set_net_visible_on_main(!atomic_load(&g_net_visible));
     }
 
+    int cur_src = (atomic_load(&g_input_source) == 1 && atomic_load(&g_phys_connected)) ? 1 : 0;
+
     if (sens_changed) {
         persist_sensitivity_async(now_sens);
         NSString *msg = [NSString stringWithFormat:@"✦ TRACKPAD HASSASİYETİ: %.2fx (Kaydedildi)", now_sens];
@@ -952,7 +1339,8 @@ static NSEvent *handle_local_nsevent(NSEvent *event) {
         if (g_hud_visible) {
             if (g_hud_last_mode != now_mode ||
                 g_hud_last_capture != (now_capture ? YES : NO) ||
-                g_hud_last_smart != (now_smart ? YES : NO)) {
+                g_hud_last_smart != (now_smart ? YES : NO) ||
+                g_hud_last_source != cur_src) {
                 rebuild_hud_content_on_main(now_capture, now_mode, now_smart);
             }
         } else if (smart_changed) {
@@ -983,12 +1371,18 @@ static NSEvent *handle_local_nsevent(NSEvent *event) {
             show_toast_on_main(msg, col);
         } else if (capture_changed) {
             NSString *modeTag = now_mode == 2 ? @"UÇAK" : (now_mode == 1 ? @"ARAÇ" : @"YAYA");
-            NSString *msg = now_capture
-                ? [NSString stringWithFormat:@"● KİLİTLİ (%@) · [0] Bırak · [H] Tuşlar · [;] Ping", modeTag]
-                : @"○ İMLEÇ SERBEST · [0] Tekrar Kilitle";
-            NSColor *col = now_capture
-                ? [NSColor colorWithRed:0.45 green:0.96 blue:0.64 alpha:1.0]
-                : [NSColor colorWithRed:0.88 green:0.88 blue:0.90 alpha:1.0];
+            NSString *msg;
+            NSColor *col;
+            if (now_capture) {
+                msg = [NSString stringWithFormat:@"● KİLİTLİ (%@) · [0] Bırak · [H] Tuşlar · [;] Ping", modeTag];
+                col = [NSColor colorWithRed:0.45 green:0.96 blue:0.64 alpha:1.0];
+            } else if (cur_src == 1) {
+                msg = @"● DUALSENSE AKTİF (İmleç Serbest) · [0] Trackpad · [;] Ping · [H] HUD";
+                col = [NSColor colorWithRed:0.44 green:0.96 blue:0.68 alpha:1.0];
+            } else {
+                msg = @"○ İMLEÇ SERBEST · [0] Tekrar Kilitle";
+                col = [NSColor colorWithRed:0.88 green:0.88 blue:0.90 alpha:1.0];
+            }
             show_toast_on_main(msg, col);
         }
     } else if (cruise_changed) {
@@ -1073,6 +1467,29 @@ static void install_cocoa_monitors_on_main(void) {
             }
         }];
 
+        /* Physical DualSense Hybrid Hot-Swap via Apple GameController.framework (zero permissions) */
+        if (@available(macOS 11.3, *)) {
+            GCController.shouldMonitorBackgroundEvents = YES;
+        }
+        g_phys_connect_obs = [nc addObserverForName:GCControllerDidConnectNotification
+                                             object:nil
+                                              queue:[NSOperationQueue mainQueue]
+                                         usingBlock:^(NSNotification *note) {
+            (void)note;
+            refresh_phys_controllers_on_main(true);
+        }];
+        g_phys_disconnect_obs = [nc addObserverForName:GCControllerDidDisconnectNotification
+                                                object:nil
+                                                 queue:[NSOperationQueue mainQueue]
+                                            usingBlock:^(NSNotification *note) {
+            (void)note;
+            refresh_phys_controllers_on_main(true);
+        }];
+        refresh_phys_controllers_on_main(false);
+
+        /* Seed runtime profile mtime for zero-restart Studio hot-reload */
+        check_profile_hot_reload_on_main();
+
         /* Apply Senza icon & bring newly launched app / Remote Play windows to front */
         apply_senza_branding_on_main();
         bring_window_to_front_on_main(nil);
@@ -1090,12 +1507,15 @@ static void install_cocoa_monitors_on_main(void) {
             dispatch_source_set_event_handler(g_window_watch_timer, ^{
                 @autoreleasepool {
                     check_new_windows_and_focus_on_main();
+                    if ((++g_cfg_watch_tick & 1) == 0) {
+                        check_profile_hot_reload_on_main();
+                    }
                 }
             });
             dispatch_resume(g_window_watch_timer);
         }
 
-        fprintf(stderr, "[senza] Ready (GTA 6 Smart Pack)! '0'=Toggle, 'G'=Car, 'O'=Aircraft, 'T'=Smart, ';'=Ping, 'H'=HUD.\n");
+        fprintf(stderr, "[senza] Ready (GTA 6 Smart Pack + Hybrid DualSense)! '0'=Trackpad, ';'=Ping, 'H'=HUD.\n");
         fflush(stderr);
     }
 }
@@ -1184,6 +1604,17 @@ void psr_capture_stop(void) {
                 [nc removeObserver:g_window_close_observer];
                 g_window_close_observer = nil;
             }
+            if (g_phys_connect_obs != nil) {
+                [nc removeObserver:g_phys_connect_obs];
+                g_phys_connect_obs = nil;
+            }
+            if (g_phys_disconnect_obs != nil) {
+                [nc removeObserver:g_phys_disconnect_obs];
+                g_phys_disconnect_obs = nil;
+            }
+            pthread_mutex_lock(&g_phys_lock);
+            attach_phys_controller_locked(nil);
+            pthread_mutex_unlock(&g_phys_lock);
             g_seen_windows = nil;
         }
     };
@@ -1196,6 +1627,62 @@ void psr_capture_stop(void) {
 }
 
 void psr_capture_sample_state(float dt_ms, PsrPadState *out_state) {
+    /* 1. Check physical DualSense for zero-latency Hybrid Hot-Swap */
+    PsrPadState phys_state;
+    bool phys_ok = false;
+    bool phys_activity = false;
+    if (atomic_load(&g_phys_connected)) {
+        phys_ok = sample_physical_dualsense(&phys_state, &phys_activity);
+    }
+
+    if (phys_ok && phys_activity && atomic_load(&g_input_source) == 0) {
+        atomic_store(&g_input_source, 1);
+        int mode_id = 0;
+        bool smart = true;
+        pthread_mutex_lock(&g_lock);
+        if (g_mapper) {
+            psr_mapper_set_capture(g_mapper, false);
+            mode_id = current_mode_id(g_mapper->vehicle_mode, g_mapper->aircraft_mode);
+            smart = g_mapper->smart_mode;
+        }
+        pthread_mutex_unlock(&g_lock);
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            apply_cursor_lock_locked(false);
+            if (g_assist_visible) {
+                update_assist_pill_on_main(NO, nil, nil);
+            }
+            if (g_hud_visible) {
+                rebuild_hud_content_on_main(false, mode_id, smart);
+            } else {
+                show_toast_on_main(
+                    @"● DUALSENSE HOT-SWAP · [0] Trackpad · [;] Ping · [H] HUD",
+                    [NSColor colorWithRed:0.44 green:0.96 blue:0.68 alpha:1.0]
+                );
+            }
+        });
+    }
+
+    if (phys_ok && atomic_load(&g_input_source) == 1) {
+        pthread_mutex_lock(&g_phys_lock);
+        if (g_phys_mic_pulse_ms > 0.0f) {
+            phys_state.buttons[PSR_BTN_MIC] = 1;
+            g_phys_mic_pulse_ms -= dt_ms;
+            if (g_phys_mic_pulse_ms < 0.0f) g_phys_mic_pulse_ms = 0.0f;
+        }
+        pthread_mutex_unlock(&g_phys_lock);
+
+        *out_state = phys_state;
+        if (g_prev_assist_kind != 0) {
+            g_prev_assist_kind = 0;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                update_assist_pill_on_main(NO, nil, nil);
+            });
+        }
+        return;
+    }
+
+    /* 2. Trackpad + Keyboard GTA 6 Smart Pack path */
     int assist_kind = 0; /* 0=none, 1=hotwire, 2=circle, 3=sticky, 4=rapid */
     float srx = 0.0f;
     float sry = 0.0f;
@@ -1267,6 +1754,42 @@ void psr_capture_sample_state(float dt_ms, PsrPadState *out_state) {
 
 void psr_capture_on_dualsense_feedback(const PsrDualSenseFeedback *fb) {
     if (!fb || !atomic_load(&g_running) || !atomic_load(&g_app_active)) return;
+
+    bool phys_mode = (atomic_load(&g_input_source) == 1 && atomic_load(&g_phys_connected));
+    if (phys_mode) {
+        /* 1. Forward PS5 DualSense rumble motors to physical DualSense via CoreHaptics (~20Hz) */
+        if (fb->rumble_left >= 12 || fb->rumble_right >= 12) {
+            uint64_t now = cap_now_ns();
+            if (now - g_last_phys_rumble_ns >= 50000000ULL) {
+                g_last_phys_rumble_ns = now;
+                uint8_t rl = fb->rumble_left;
+                uint8_t rr = fb->rumble_right;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    forward_phys_rumble_on_main(rl, rr);
+                });
+            }
+        }
+        /* 2. Forward PS5 Lightbar RGB to both physical DualSense LED and HUD border */
+        if (fb->has_lightbar) {
+            int diff = abs((int)fb->led_r - (int)g_last_led_r) +
+                       abs((int)fb->led_g - (int)g_last_led_g) +
+                       abs((int)fb->led_b - (int)g_last_led_b);
+            if (!g_has_led_color || diff >= 10) {
+                g_last_led_r = fb->led_r;
+                g_last_led_g = fb->led_g;
+                g_last_led_b = fb->led_b;
+                g_has_led_color = true;
+                uint8_t r = fb->led_r;
+                uint8_t g = fb->led_g;
+                uint8_t b = fb->led_b;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    forward_phys_lightbar_on_main(r, g, b);
+                    apply_lightbar_border_on_main(r, g, b);
+                });
+            }
+        }
+        return;
+    }
 
     bool smart_enabled = false;
     bool haptics_enabled = false;

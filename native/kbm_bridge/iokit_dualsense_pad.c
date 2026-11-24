@@ -286,7 +286,9 @@ static void my_IOHIDManagerRegisterDeviceMatchingCallback(
         g_match_cb = callback;
         g_match_ctx = context;
     }
-    IOHIDManagerRegisterDeviceMatchingCallback(manager, callback, context);
+    /* Suppress duplicate raw HID callbacks so RemotePlay binds cleanly to Senza's Virtual USB DualSense
+     * while Senza reads any physical DualSense via GameController.framework for zero-conflict hot-swap. */
+    IOHIDManagerRegisterDeviceMatchingCallback(manager, NULL, NULL);
 }
 
 static void my_IOHIDManagerScheduleWithRunLoop(
@@ -311,23 +313,9 @@ static IOReturn my_IOHIDManagerOpen(IOHIDManagerRef manager, IOOptionBits option
 }
 
 static CFSetRef my_IOHIDManagerCopyDevices(IOHIDManagerRef manager) {
+    (void)manager;
     ensure_initialized();
-    CFSetRef orig = IOHIDManagerCopyDevices(manager);
-    CFMutableSetRef out = CFSetCreateMutable(kCFAllocatorDefault, 0, &kCFTypeSetCallBacks);
-    if (orig) {
-        CFIndex n = CFSetGetCount(orig);
-        if (n > 0) {
-            const void **vals = (const void **)calloc((size_t)n, sizeof(void *));
-            if (vals) {
-                CFSetGetValues(orig, vals);
-                for (CFIndex i = 0; i < n; i++) {
-                    CFSetAddValue(out, vals[i]);
-                }
-                free(vals);
-            }
-        }
-        CFRelease(orig);
-    }
+    CFMutableSetRef out = CFSetCreateMutable(kCFAllocatorDefault, 1, &kCFTypeSetCallBacks);
     CFSetAddValue(out, g_fake_device);
     return out;
 }
