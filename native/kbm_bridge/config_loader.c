@@ -127,5 +127,6 @@ bool psr_config_load_file(const char *path, PsrConfig *cfg) {
     }
 
     fclose(fp);
+    psr_config_sanitize(cfg);
     return true;
 }

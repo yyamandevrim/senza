@@ -160,9 +160,13 @@ def prepare_patched_app(source_app: Path, client: str = "chiaki", force: bool = 
     stamp_file = SONY_STAMP_FILE if client == "sony" else CHIAKI_STAMP_FILE
     stamp = _bundle_signature_stamp(source_app, client=client)
 
-    if not force and patched.exists() and stamp_file.exists():
-        if stamp_file.read_text(encoding="utf-8").strip() == stamp:
-            return patched
+    if (
+        not force
+        and patched.exists()
+        and stamp_file.exists()
+        and stamp_file.read_text(encoding="utf-8").strip() == stamp
+    ):
+        return patched
 
     if patched.exists():
         shutil.rmtree(patched)
@@ -195,9 +199,7 @@ def build_launch_env(
 ) -> dict[str, str]:
     env = os.environ.copy()
     existing_dyld = env.get("DYLD_INSERT_LIBRARIES", "")
-    env["DYLD_INSERT_LIBRARIES"] = (
-        f"{dylib_path}:{existing_dyld}" if existing_dyld else str(dylib_path)
-    )
+    env["DYLD_INSERT_LIBRARIES"] = f"{dylib_path}:{existing_dyld}" if existing_dyld else str(dylib_path)
     env["SENZA_PROFILE_CFG"] = str(runtime_cfg_path)
     if profile_json_path is not None:
         env["SENZA_PROFILE_JSON"] = str(profile_json_path)
@@ -230,9 +232,7 @@ def _activate_running_app_async(proc: subprocess.Popen[bytes], app_bundle: Path)
             msg_ptr_int = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int)(
                 ("objc_msgSend", objc)
             )
-            msg_bool = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(
-                ("objc_msgSend", objc)
-            )
+            msg_bool = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(("objc_msgSend", objc))
             msg_activate = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong)(
                 ("objc_msgSend", objc)
             )

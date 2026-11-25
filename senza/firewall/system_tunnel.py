@@ -10,7 +10,7 @@ from . import bypass as _bypass
 from . import probes as _probes
 from . import tailscale as _tailscale
 from . import warp as _warp
-from .common import NO_EXIT_NODE_HINT, Runner, SYSTEM_TUNNEL_STATE_FILE, _default_runner
+from .common import NO_EXIT_NODE_HINT, SYSTEM_TUNNEL_STATE_FILE, Runner, _default_runner
 from .launchd import LAUNCH_AGENT_LABEL, LAUNCH_AGENT_PATH
 
 
@@ -30,13 +30,17 @@ def system_tunnel_status(
     target = _tailscale.resolve_exit_node(exit_node, runner, saved=str(saved.get("target_exit_node") or ""))
 
     ts_cli = _tailscale.find_tailscale_cli(runner)
-    ts_info = _tailscale.inspect_tailscale_exit_node(ts_cli, target=target, runner=runner) if ts_cli else {
-        "backend_state": "NotInstalled",
-        "ready": False,
-        "active_exit_node": None,
-        "available_exit_nodes": [],
-        "status_text": "Tailscale CLI not installed",
-    }
+    ts_info = (
+        _tailscale.inspect_tailscale_exit_node(ts_cli, target=target, runner=runner)
+        if ts_cli
+        else {
+            "backend_state": "NotInstalled",
+            "ready": False,
+            "active_exit_node": None,
+            "available_exit_nodes": [],
+            "status_text": "Tailscale CLI not installed",
+        }
+    )
     warp_connected = _warp._warp_is_connected(runner)
 
     active_exit = ts_info.get("active_exit_node")
@@ -112,11 +116,7 @@ def system_tunnel_up(
             if res.returncode == 0:
                 notes.append("Disconnected previous WARP fallback (Tailscale exit-node is now primary)")
 
-    active_backend = (
-        "tailscale"
-        if fb._tailscale_exit_active
-        else ("warp" if fb._warp_connected_by_us else "none")
-    )
+    active_backend = "tailscale" if fb._tailscale_exit_active else ("warp" if fb._warp_connected_by_us else "none")
 
     merged = {
         "persistent": True,
@@ -126,7 +126,9 @@ def system_tunnel_up(
         "fallback_warp": fallback_warp,
         "dns_service": fb._dns_service or prev_saved.get("dns_service"),
         "prev_dns": fb._prev_dns if fb._dns_service else prev_saved.get("prev_dns"),
-        "warp_connected_by_us": bool(fb._warp_connected_by_us or (active_backend == "warp" and prev_saved.get("warp_connected_by_us"))),
+        "warp_connected_by_us": bool(
+            fb._warp_connected_by_us or (active_backend == "warp" and prev_saved.get("warp_connected_by_us"))
+        ),
         "warp_cli": fb._warp_cli or prev_saved.get("warp_cli"),
         "tailscale_started_by_us": bool(fb._tailscale_started_by_us or prev_saved.get("tailscale_started_by_us")),
         "tailscale_exit_set_by_us": bool(fb._tailscale_exit_set_by_us or prev_saved.get("tailscale_exit_set_by_us")),

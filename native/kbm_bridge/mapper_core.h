@@ -169,6 +169,8 @@ typedef struct {
 } PsrMapper;
 
 void psr_config_init_default(PsrConfig *cfg);
+/* Replace non-finite floats with defaults, clamp tunables to safe ranges and binding counts to capacity. */
+void psr_config_sanitize(PsrConfig *cfg);
 void psr_mapper_init(PsrMapper *m, const PsrConfig *cfg);
 void psr_mapper_reset_inputs(PsrMapper *m);
 

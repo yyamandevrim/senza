@@ -159,7 +159,9 @@ def inspect_tailscale_exit_node(
         return info
     if state == "Stopped":
         info["status_text"] = (
-            f"Tailscale stopped (will auto-start & use {target} on Launch)" if target else f"Tailscale stopped · {NO_EXIT_NODE_HINT}"
+            f"Tailscale stopped (will auto-start & use {target} on Launch)"
+            if target
+            else f"Tailscale stopped · {NO_EXIT_NODE_HINT}"
         )
         return info
     if state != "Running":

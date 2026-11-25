@@ -12,7 +12,7 @@ from ..config import configured_exit_node
 from . import netsvc as _netsvc
 from . import tailscale as _tailscale
 from . import warp as _warp
-from .common import Runner, TAILSCALE_DERP_PROBE_HOSTS, _default_runner
+from .common import TAILSCALE_DERP_PROBE_HOSTS, Runner, _default_runner
 
 
 @dataclass
@@ -168,11 +168,12 @@ def probe_psn_firewall(
 
     if rep.tailscale_available and not rep.tailscale_controlplane_ok:
         rep.diagnosis = (
-            "FortiGate/DPI blocking controlplane.tailscale.com "
-            "(auto WARP-bootstrap -> Tailscale exit-node ready)"
+            "FortiGate/DPI blocking controlplane.tailscale.com (auto WARP-bootstrap -> Tailscale exit-node ready)"
         )
     elif not rep.psn_sys_tls_ok and rep.psn_cf_tls_ok and not rep.udp_high_port_ok:
-        rep.diagnosis = "DNS/CDN PSN block + Outbound UDP firewall (use --bypass-firewall tailscale or `senza tunnel on`)"
+        rep.diagnosis = (
+            "DNS/CDN PSN block + Outbound UDP firewall (use --bypass-firewall tailscale or `senza tunnel on`)"
+        )
     elif not rep.psn_sys_tls_ok and rep.psn_cf_tls_ok:
         rep.diagnosis = "DNS/CDN PSN block (fixed immediately by --bypass-firewall dns or tailscale)"
     elif not rep.psn_sys_tls_ok and not rep.psn_cf_tls_ok:

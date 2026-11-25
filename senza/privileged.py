@@ -13,8 +13,8 @@ import shlex
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 

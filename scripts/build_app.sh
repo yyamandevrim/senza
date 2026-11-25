@@ -6,6 +6,11 @@ APP_DIR="${1:-$ROOT_DIR/build/Senza.app}"
 ICON_PNG="$ROOT_DIR/assets/icon.png"
 ICONSET_DIR="$ROOT_DIR/build/Senza.iconset"
 SWIFT_SRCS=("$ROOT_DIR"/native/gui/Sources/*.swift)
+# Single version source: senza/__init__.py
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$ROOT_DIR/senza/__init__.py")"
+BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || echo 1)"
+# Extra swiftc flags, e.g. SWIFT_FLAGS=-warnings-as-errors in CI
+read -r -a EXTRA_SWIFT_FLAGS <<< "${SWIFT_FLAGS:-}"
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
@@ -50,9 +55,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.3.0</string>
+  <string>${VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>4</string>
+  <string>${BUILD_NUMBER}</string>
   <key>SenzaRepoRoot</key>
   <string>${ROOT_DIR}</string>
   <key>LSMinimumSystemVersion</key>
@@ -72,6 +77,7 @@ swiftc \
   -framework AppKit \
   -framework SwiftUI \
   -framework GameController \
+  ${EXTRA_SWIFT_FLAGS[@]+"${EXTRA_SWIFT_FLAGS[@]}"} \
   "${SWIFT_SRCS[@]}" \
   -o "$APP_DIR/Contents/MacOS/Senza"
 

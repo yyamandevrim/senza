@@ -152,8 +152,11 @@ class TestRootP2PWatchdog(unittest.TestCase):
                 state_file=Path(tmp) / "state.json",
                 lease_file=lease,
             )
-            with mock.patch("senza.sys_optimizer.subprocess.Popen"), mock.patch("senza.sys_optimizer.atexit.register"), \
-                    mock.patch("senza.sys_optimizer.signal.signal"):
+            with (
+                mock.patch("senza.sys_optimizer.subprocess.Popen"),
+                mock.patch("senza.sys_optimizer.atexit.register"),
+                mock.patch("senza.sys_optimizer.signal.signal"),
+            ):
                 notes = opt.enter()
             osa = [c for c in calls if c and c[0] == "osascript"]
             self.assertEqual(len(osa), 1, "exactly one Touch ID / password prompt on enter")
@@ -239,9 +242,16 @@ class TestSessionVsSystemTunnelOwnership(unittest.TestCase):
             atomic_write_json(system_state, {"persistent": True})
             atomic_write_json(
                 session_state,
-                {"tailscale_exit_set_by_us": True, "tailscale_cli": "ts", "warp_connected_by_us": True, "warp_cli": "w"},
+                {
+                    "tailscale_exit_set_by_us": True,
+                    "tailscale_cli": "ts",
+                    "warp_connected_by_us": True,
+                    "warp_cli": "w",
+                },
             )
-            notes = restore_firewall_bypass(runner=fake_runner, state_file=session_state, system_state_file=system_state)
+            notes = restore_firewall_bypass(
+                runner=fake_runner, state_file=session_state, system_state_file=system_state
+            )
             self.assertEqual(calls, [])
             self.assertFalse(session_state.exists())
             self.assertTrue(any("owned by system-wide tunnel" in n for n in notes))
@@ -281,7 +291,9 @@ class TestUserConfig(unittest.TestCase):
         from senza.cli import main
 
         self.assertEqual(main(["config", "set", "exit-node", "100.64.0.42"]), 0)
-        self.assertEqual(json.loads(Path(os.environ["SENZA_CONFIG"]).read_text())["tailscale"]["exit_node"], "100.64.0.42")
+        self.assertEqual(
+            json.loads(Path(os.environ["SENZA_CONFIG"]).read_text())["tailscale"]["exit_node"], "100.64.0.42"
+        )
         self.assertEqual(main(["config", "unset", "exit-node"]), 0)
         self.assertEqual(main(["config", "get", "exit-node"]), 1)
 

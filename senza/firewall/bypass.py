@@ -14,7 +14,14 @@ from . import netsvc as _netsvc
 from . import probes as _probes
 from . import tailscale as _tailscale
 from . import warp as _warp
-from .common import BYPASS_STATE_FILE, CLEAN_DNS_SERVERS, NO_EXIT_NODE_HINT, Runner, SYSTEM_TUNNEL_STATE_FILE, _default_runner
+from .common import (
+    BYPASS_STATE_FILE,
+    CLEAN_DNS_SERVERS,
+    NO_EXIT_NODE_HINT,
+    SYSTEM_TUNNEL_STATE_FILE,
+    Runner,
+    _default_runner,
+)
 
 
 class FirewallBypass:
@@ -139,7 +146,9 @@ class FirewallBypass:
             if mode_res.returncode == 0:
                 notes.append("Switched Cloudflare WARP from DNS-only to full WARP tunnel mode")
             else:
-                notes.append(f"Warning: could not set WARP mode to 'warp' ({mode_res.stderr.strip() or mode_res.stdout.strip()})")
+                notes.append(
+                    f"Warning: could not set WARP mode to 'warp' ({mode_res.stderr.strip() or mode_res.stdout.strip()})"
+                )
 
         already_connected = (
             is_full_warp_mode
@@ -304,9 +313,7 @@ class FirewallBypass:
                     need_boot = not cp_ok
                 if need_boot:
                     warp = _warp.find_warp_cli() or "warp-cli"
-                    notes.append(
-                        f"[dry-run] FortiGate WARP bootstrap: {warp} connect -> {ts} up -> {warp} disconnect"
-                    )
+                    notes.append(f"[dry-run] FortiGate WARP bootstrap: {warp} connect -> {ts} up -> {warp} disconnect")
                 else:
                     notes.append(f"[dry-run] {ts} up  (current Tailscale state: {state})")
             notes.append(f"[dry-run] {ts} set --exit-node={target_node} --exit-node-allow-lan-access=true")
@@ -339,7 +346,9 @@ class FirewallBypass:
                 cp_ok, cp_detail = _probes.probe_tailscale_controlplane(timeout=2.5)
                 if not cp_ok:
                     use_bootstrap = True
-                    notes.append(f"controlplane.tailscale.com blocked ({cp_detail}) — engaging FortiGate WARP bootstrap")
+                    notes.append(
+                        f"controlplane.tailscale.com blocked ({cp_detail}) — engaging FortiGate WARP bootstrap"
+                    )
 
             if use_bootstrap:
                 data, boot_notes = self._warp_bootstrap_tailscale_up(ts)
@@ -367,7 +376,11 @@ class FirewallBypass:
                         return notes
                     time.sleep(0.5)
 
-                if (not data or str(data.get("BackendState") or "") != "Running") and self.warp_bootstrap == "auto" and _warp.find_warp_cli():
+                if (
+                    (not data or str(data.get("BackendState") or "") != "Running")
+                    and self.warp_bootstrap == "auto"
+                    and _warp.find_warp_cli()
+                ):
                     notes.append("Direct `tailscale up` stalled (possible FortiGate DPI) — retrying via WARP bootstrap")
                     data, boot_notes = self._warp_bootstrap_tailscale_up(ts)
                     notes.extend(boot_notes)
@@ -396,8 +409,7 @@ class FirewallBypass:
         if peer is None:
             avail = _tailscale._tailscale_list_exit_nodes(data)
             msg = (
-                f"Warning: Tailscale exit node {target_node} is not in your tailnet yet "
-                "(waiting for share/ACL access)."
+                f"Warning: Tailscale exit node {target_node} is not in your tailnet yet (waiting for share/ACL access)."
             )
             if avail:
                 msg += f" Available exit nodes: {', '.join(avail)}"
@@ -424,9 +436,7 @@ class FirewallBypass:
 
         peer_ips = {str(ip).strip().lower() for ip in (peer.get("TailscaleIPs") or [])}
         prev_exit = (self._prev_tailscale_exit_node or "").strip().lower()
-        already_using_target = bool(
-            prev_exit and (prev_exit == target_node.strip().lower() or prev_exit in peer_ips)
-        )
+        already_using_target = bool(prev_exit and (prev_exit == target_node.strip().lower() or prev_exit in peer_ips))
 
         if not already_using_target:
             cmd = [ts, "set", f"--exit-node={target_node}", "--exit-node-allow-lan-access=true"]
@@ -543,13 +553,12 @@ class FirewallBypass:
                 ts_node = _tailscale._tailscale_discover_exit_node(ts, self.runner) if ts else None
                 if ts_node:
                     notes.extend(self._connect_tailscale())
-                elif not self.dry_run:
-                    if not _probes._stun_check("stun.l.google.com", 19302, timeout=1.5):
-                        notes.append(
-                            "Notice: Clean DNS (1.1.1.1) applied, but this firewall ALSO blocks outbound UDP. "
-                            "For full PS Remote Play tunnel bypass, install Cloudflare WARP (`brew install --cask cloudflare-warp`) "
-                            "or enable a Tailscale Exit Node (`senza config set exit-node <ip>` then `--bypass-firewall tailscale`)."
-                        )
+                elif not self.dry_run and not _probes._stun_check("stun.l.google.com", 19302, timeout=1.5):
+                    notes.append(
+                        "Notice: Clean DNS (1.1.1.1) applied, but this firewall ALSO blocks outbound UDP. "
+                        "For full PS Remote Play tunnel bypass, install Cloudflare WARP (`brew install --cask cloudflare-warp`) "
+                        "or enable a Tailscale Exit Node (`senza config set exit-node <ip>` then `--bypass-firewall tailscale`)."
+                    )
 
         if not self.dry_run and not self.persistent:
             atexit.register(self.exit)
@@ -650,7 +659,11 @@ def restore_firewall_bypass(
 
     data = read_json_dict(state_file)
     if _session_defers_to_system_tunnel(state_file, system_state_file):
-        if data.get("warp_connected_by_us") or data.get("tailscale_exit_set_by_us") or data.get("tailscale_started_by_us"):
+        if (
+            data.get("warp_connected_by_us")
+            or data.get("tailscale_exit_set_by_us")
+            or data.get("tailscale_started_by_us")
+        ):
             notes.append("Kept Tailscale/WARP routing up (owned by system-wide tunnel `senza tunnel on`)")
         for key in ("warp_connected_by_us", "tailscale_exit_set_by_us", "tailscale_started_by_us"):
             data[key] = False

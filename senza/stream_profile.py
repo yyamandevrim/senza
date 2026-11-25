@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from .net_probe import NetworkReport
 
@@ -19,10 +19,10 @@ Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 @dataclass(frozen=True)
 class StreamPreset:
     name: str
-    resolution: str      # "720p" or "1080p"
-    fps: int             # 60
+    resolution: str  # "720p" or "1080p"
+    fps: int  # 60
     bitrate_kbps: int
-    codec: str           # "h265"
+    codec: str  # "h265"
     audio_buffer_size: int
     hw_decoder: str = "auto"
     render_backend: str = "vulkan"

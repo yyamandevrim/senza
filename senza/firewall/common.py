@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .. import privileged
-
 
 STATE_DIR = Path.home() / ".local" / "share" / "senza"
 

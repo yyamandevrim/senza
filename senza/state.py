@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -24,10 +25,8 @@ def atomic_write_text(path: Path, text: str) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp_name, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise
 
 

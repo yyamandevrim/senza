@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import os
 import shlex
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from . import privileged
 from .state import atomic_write_json, read_json_dict, remove_file
@@ -78,9 +80,7 @@ def build_root_p2p_watchdog(
     """
     lease_q = shlex.quote(str(lease_file))
     ack_q = shlex.quote(str(_ack_file(lease_file)))
-    keep_down = " ; ".join(
-        f"if ifconfig {i} 2>/dev/null | grep -q UP, ; then ifconfig {i} down ; fi" for i in ifaces
-    )
+    keep_down = " ; ".join(f"if ifconfig {i} 2>/dev/null | grep -q UP, ; then ifconfig {i} down ; fi" for i in ifaces)
     restore_parts = [f"ifconfig {i} up" for i in ifaces]
     restore_parts += [f"sysctl -w {k}={v}" for k, v in saved_sysctls.items()]
     restore = " ; ".join(restore_parts) if restore_parts else "true"
@@ -284,10 +284,8 @@ class SystemOptimizer:
                 self._caffeinate_proc.terminate()
                 self._caffeinate_proc.wait(timeout=2.0)
             except (OSError, subprocess.TimeoutExpired):
-                try:
+                with contextlib.suppress(OSError):
                     self._caffeinate_proc.kill()
-                except OSError:
-                    pass
             self._caffeinate_proc = None
             notes.append("Stopped caffeinate")
 

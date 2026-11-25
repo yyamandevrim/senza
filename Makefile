@@ -70,6 +70,25 @@ $(TEST_BIN): $(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c tests/tes
 test-c: $(TEST_BIN)
 	./$(TEST_BIN)
 
+# Sanitized native tests. UBSan everywhere; CI adds ASan with SANITIZE=address,undefined
+# (ASan's runtime currently deadlocks at startup on some macOS 27 betas).
+SANITIZE ?= undefined,float-cast-overflow
+FUZZ_ITERS ?= 300
+test-sanitize:
+	mkdir -p $(BUILD_DIR)
+	$(CC) -O1 -g -std=c11 -Wall -Wextra -I$(NATIVE_DIR) -fsanitize=$(SANITIZE) -fno-sanitize-recover=all \
+		$(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c tests/test_mapper_core.c -o $(BUILD_DIR)/test_mapper_core_san -lm
+	$(CC) -O1 -g -std=c11 -Wall -Wextra -I$(NATIVE_DIR) -fsanitize=$(SANITIZE) -fno-sanitize-recover=all \
+		$(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c tests/test_native_fuzz.c -o $(BUILD_DIR)/test_native_fuzz_san -lm
+	./$(BUILD_DIR)/test_mapper_core_san
+	./$(BUILD_DIR)/test_native_fuzz_san $(FUZZ_ITERS) 1
+	./$(BUILD_DIR)/test_native_fuzz_san $(FUZZ_ITERS) 0xdeadbeef
+
+lint:
+	ruff check senza tests
+	ruff format --check senza tests
+	sh -n senza/resources/senza-priv
+
 test-py:
 	python3 -m unittest discover -s tests -p "test_*.py" -v
 

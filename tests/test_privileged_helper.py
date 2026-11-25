@@ -61,7 +61,9 @@ class TestPrivilegedHelperScript(unittest.TestCase):
         self._tmp.cleanup()
 
     def run_helper(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["/bin/sh", str(self.helper), *args], env=self.env, capture_output=True, text=True, timeout=10)
+        return subprocess.run(
+            ["/bin/sh", str(self.helper), *args], env=self.env, capture_output=True, text=True, timeout=10
+        )
 
     def test_script_syntax_and_version(self) -> None:
         self.assertEqual(subprocess.run(["/bin/sh", "-n", str(HELPER_SRC)]).returncode, 0)
@@ -156,11 +158,18 @@ class TestPrivilegedPython(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             lease = Path(tmp) / "p2p_watchdog.lease"
             opt = SystemOptimizer(
-                privileged=True, gui_sudo=True, runner=runner, state_file=Path(tmp) / "s.json",
-                lease_file=lease, use_helper=True,
+                privileged=True,
+                gui_sudo=True,
+                runner=runner,
+                state_file=Path(tmp) / "s.json",
+                lease_file=lease,
+                use_helper=True,
             )
-            with mock.patch("senza.sys_optimizer.subprocess.Popen"), mock.patch("senza.sys_optimizer.atexit.register"), \
-                    mock.patch("senza.sys_optimizer.signal.signal"):
+            with (
+                mock.patch("senza.sys_optimizer.subprocess.Popen"),
+                mock.patch("senza.sys_optimizer.atexit.register"),
+                mock.patch("senza.sys_optimizer.signal.signal"),
+            ):
                 opt.enter()
             boost = [c for c in calls if c[:2] == ["sudo", "-n"]]
             self.assertEqual(len(boost), 1)

@@ -5,9 +5,8 @@ from __future__ import annotations
 import re
 import statistics
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
-
 
 CommandRunner = Callable[[list[str], float], subprocess.CompletedProcess[str]]
 
@@ -96,9 +95,7 @@ def probe_network(
         if m:
             report.default_interface = m.group(1)
         ports_res = runner(["networksetup", "-listallhardwareports"], 5.0)
-        wifi_match = re.search(
-            r"Hardware Port:\s*Wi-Fi\s*\nDevice:\s*(\S+)", ports_res.stdout, re.IGNORECASE
-        )
+        wifi_match = re.search(r"Hardware Port:\s*Wi-Fi\s*\nDevice:\s*(\S+)", ports_res.stdout, re.IGNORECASE)
         if wifi_match and wifi_match.group(1) == report.default_interface:
             report.is_wifi = True
     except (subprocess.TimeoutExpired, OSError):
@@ -133,8 +130,6 @@ def probe_network(
             f"High packet loss ({report.packet_loss_pct}%) — switching to wan-lowbw (720p60) recommended."
         )
     elif report.jitter_ms is not None and report.jitter_ms >= 20.0:
-        report.warnings.append(
-            f"High jitter ({report.jitter_ms} ms) — prefer Ethernet or pause awdl0 (--privileged)."
-        )
+        report.warnings.append(f"High jitter ({report.jitter_ms} ms) — prefer Ethernet or pause awdl0 (--privileged).")
 
     return report

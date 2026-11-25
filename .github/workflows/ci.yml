@@ -7,22 +7,42 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Ruff lint + format check, helper script syntax
+        run: |
+          uvx ruff@0.8.4 check senza tests
+          uvx ruff@0.8.4 format --check senza tests
+          sh -n senza/resources/senza-priv
+      - name: mypy (advisory)
+        continue-on-error: true
+        run: uvx mypy@1.13.0 senza
+
   macos-build-and-test:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build native DualSense bridges & Senza.app
-        run: make build app
+      - name: Build native DualSense bridges (parallel) & Senza.app (warnings are errors)
+        run: |
+          make -j4 build
+          SWIFT_FLAGS=-warnings-as-errors make app
 
       - name: Run C & Python unit tests
         run: make test
+
+      - name: Sanitized native tests (ASan + UBSan, randomized config/mapper stress)
+        run: make test-sanitize SANITIZE=address,undefined,float-cast-overflow FUZZ_ITERS=500
 
       - name: Verify CLI dry-run
         run: |
           chmod +x bin/senza
           ./bin/senza --version
           ./bin/senza start --dry-run
+          ./bin/senza config path
 
       - name: Setup Node.js for Raycast extension
         uses: actions/setup-node@v4

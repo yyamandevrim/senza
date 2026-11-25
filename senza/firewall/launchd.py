@@ -8,8 +8,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .common import Runner, STATE_DIR, _default_runner
-
+from .common import STATE_DIR, Runner, _default_runner
 
 LAUNCH_AGENT_LABEL = "com.senza.fortigate-tailscale"
 

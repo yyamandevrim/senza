@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 static void test_wasd_diagonal_normalization(void) {
     PsrMapper m;
@@ -435,7 +436,49 @@ static void test_trackpad_smoothness_no_sawtooth(void) {
     assert(m.pad.rx == 0 && m.pad.ry == 0);
 }
 
+static void test_config_sanitize_rejects_nonfinite_and_out_of_range(void) {
+    PsrConfig cfg;
+    psr_config_init_default(&cfg);
+    float default_sens = cfg.sensitivity;
+    cfg.sensitivity = NAN;
+    cfg.smoothing = 1e30f;
+    cfg.deadzone = -3.0f;
+    cfg.on_foot_count = PSR_MAX_BINDINGS + 50;
+    psr_config_sanitize(&cfg);
+    assert(cfg.sensitivity == default_sens);
+    assert(cfg.smoothing <= 1.0f);
+    assert(cfg.deadzone == 0.0f);
+    assert(cfg.on_foot_count == PSR_MAX_BINDINGS);
+
+    /* A hot-reloaded runtime_profile.cfg with garbage must come back sane. */
+    char path[] = "/tmp/senza_cfg_test_XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0);
+    FILE *fp = fdopen(fd, "w");
+    fprintf(fp, "sensitivity=nan\nsmoothing=1e40\ncurve_exponent=-inf\n");
+    fclose(fp);
+    PsrConfig loaded;
+    assert(psr_config_load_file(path, &loaded));
+    unlink(path);
+    assert(isfinite(loaded.sensitivity) && isfinite(loaded.curve_exponent));
+    assert(loaded.smoothing <= 1.0f);
+}
+
+static void test_nonfinite_inputs_never_reach_pad(void) {
+    PsrMapper m;
+    psr_mapper_init(&m, NULL);
+    psr_mapper_set_capture(&m, true);
+    psr_mapper_add_mouse_delta(&m, NAN, INFINITY);
+    psr_mapper_add_scroll(&m, -INFINITY, NAN);
+    psr_mapper_tick(&m, NAN);
+    psr_mapper_tick(&m, 8.0f);
+    assert(m.pad.rx == 0 && m.pad.ry == 0);
+    assert(!m.pad.touch_active || (m.pad.touch_x <= 1919 && m.pad.touch_y <= 1079));
+}
+
 int main(void) {
+    test_config_sanitize_rejects_nonfinite_and_out_of_range();
+    test_nonfinite_inputs_never_reach_pad();
     test_wasd_diagonal_normalization();
     test_mouse_deadzone_and_ads_scaling();
     test_vehicle_mode_and_release_reset();

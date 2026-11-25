@@ -7,8 +7,8 @@ import dataclasses
 import json
 from pathlib import Path
 
-from . import __version__
-
+from . import __version__, privileged
+from . import config as user_config
 from .app_bridge import (
     PATCHED_APP,
     PATCHED_SONY_APP,
@@ -20,8 +20,6 @@ from .app_bridge import (
     prepare_patched_app,
     resolve_launched_pid,
 )
-from . import config as user_config
-from . import privileged
 from .firewall import (
     FirewallBypass,
     install_tunnel_launch_agent,
@@ -62,7 +60,9 @@ def _print_network_report(host: str) -> tuple[object, object]:
     print(f"  AWDL (awdl0)      : {'ACTIVE (lag spike risk)' if report.awdl_active else 'inactive'}")
     if report.noisy_processes:
         print(f"  Background sync   : {', '.join(report.noisy_processes)}")
-    print(f"  Recommended preset: {preset.name} ({preset.resolution} @ {preset.fps}fps, {preset.bitrate_kbps} kbps, {preset.codec})")
+    print(
+        f"  Recommended preset: {preset.name} ({preset.resolution} @ {preset.fps}fps, {preset.bitrate_kbps} kbps, {preset.codec})"
+    )
 
     if report.warnings:
         print("\nWarnings:")
@@ -117,13 +117,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         )
         print(f"  TS controlplane   : {cp_txt}")
         print(f"  TS DERP TCP-443   : {derp_txt}")
-        print(f"  Tailscale exit    : {fw.tailscale_exit_node or '(none configured)'} -> {fw.tailscale_exit_node_status}")
+        print(
+            f"  Tailscale exit    : {fw.tailscale_exit_node or '(none configured)'} -> {fw.tailscale_exit_node_status}"
+        )
     tun_state = f"ACTIVE ({sys_tun['active_backend']})" if sys_tun["active"] else "off"
     svc_state = "installed (45s watchdog)" if sys_tun["service_installed"] else "not installed"
     print(f"  System tunnel     : {tun_state} | LaunchAgent: {svc_state}")
 
     print("\n=== Installation Check ===")
-    print(f"  Sony RemotePlay   : {sony or 'NOT FOUND'} ({'ready' if PATCHED_SONY_APP.exists() else 'run `senza setup`'})")
+    print(
+        f"  Sony RemotePlay   : {sony or 'NOT FOUND'} ({'ready' if PATCHED_SONY_APP.exists() else 'run `senza setup`'})"
+    )
     print(f"  chiaki-ng         : {chiaki or 'NOT FOUND'} ({'ready' if PATCHED_APP.exists() else 'run `senza setup`'})")
     print("  Input capture     : Cocoa in-process NSEvent monitor (zero macOS permissions required)")
     helper = privileged.helper_status()
@@ -179,6 +183,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     if use_kbm:
         from .profiles import resolve_profile_path
+
         profile_json_path = resolve_profile_path(args.profile)
         profile = load_profile(args.profile)
         runtime_cfg = export_runtime_config(profile, STATE_DIR / "runtime_profile.cfg")
@@ -188,10 +193,14 @@ def cmd_start(args: argparse.Namespace) -> int:
             _, preset = _print_network_report(args.host)
         else:
             preset = PRESETS[args.preset]
-            print(f"Using explicit stream preset: {preset.name} ({preset.resolution}@{preset.fps}fps, {preset.bitrate_kbps} kbps, {preset.codec})")
+            print(
+                f"Using explicit stream preset: {preset.name} ({preset.resolution}@{preset.fps}fps, {preset.bitrate_kbps} kbps, {preset.codec})"
+            )
 
         print(f"\nApplying chiaki-ng stream settings ({preset.name})...")
-        cmds = apply_stream_preset(preset, disable_builtin_kbm=(use_kbm and not args.keep_chiaki_kbm), dry_run=args.dry_run)
+        cmds = apply_stream_preset(
+            preset, disable_builtin_kbm=(use_kbm and not args.keep_chiaki_kbm), dry_run=args.dry_run
+        )
         if args.dry_run:
             for c in cmds:
                 print(f"  [dry-run] {' '.join(c)}")
@@ -244,13 +253,19 @@ def cmd_start(args: argparse.Namespace) -> int:
     target_app = prepare_patched_app(source_app, client=client, force=False) if use_kbm else source_app
 
     if start_hybrid:
-        print(f"\nStarting macOS optimizations & {client} in Hybrid Hot-Swap mode (DualSense + Trackpad + Shared HUD)...")
+        print(
+            f"\nStarting macOS optimizations & {client} in Hybrid Hot-Swap mode (DualSense + Trackpad + Shared HUD)..."
+        )
         print("Hot-Swap: Touch DualSense anytime | '0'=Trackpad+Keys | ';'=Live Ping | '['=PS5 Mic Mute | 'H'=HUD\n")
     elif use_kbm:
         print(f"\nStarting macOS optimizations & {client} with MacBook Trackpad + Keyboard GTA 6 Smart Pack...")
-        print("Controls: '0'=Capture | 'G'=Vehicle | 'O'=Aircraft | 'T'=Smart | 'U/I/Y/L'=Assists | '-/='=Sens | ';'=Ping | 'H'=HUD\n")
+        print(
+            "Controls: '0'=Capture | 'G'=Vehicle | 'O'=Aircraft | 'T'=Smart | 'U/I/Y/L'=Assists | '-/='=Sens | ';'=Ping | 'H'=HUD\n"
+        )
     else:
-        print(f"\nStarting macOS optimizations & {client} in Native Controller mode (full DualSense haptics/triggers)...\n")
+        print(
+            f"\nStarting macOS optimizations & {client} in Native Controller mode (full DualSense haptics/triggers)...\n"
+        )
 
     optimizer = SystemOptimizer(privileged=args.privileged, gui_sudo=args.gui_sudo, dry_run=False)
     bypass = (
@@ -472,14 +487,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_doc.set_defaults(func=cmd_doctor)
 
     p_setup = sub.add_parser("setup", help="Compile native DualSense bridges and prepare ad-hoc signed app bundles")
-    p_setup.add_argument("--client", default="all", choices=["all", "sony", "chiaki"], help="Client bundle to prepare (default: all)")
+    p_setup.add_argument(
+        "--client", default="all", choices=["all", "sony", "chiaki"], help="Client bundle to prepare (default: all)"
+    )
     p_setup.add_argument("--chiaki-app", default=None, help="Custom path to chiaki-ng.app")
     p_setup.add_argument("--sony-app", default=None, help="Custom path to Sony RemotePlay.app")
     p_setup.add_argument("--force", action="store_true", help="Force rebuild of dylibs and patched app bundles")
     p_setup.set_defaults(func=cmd_setup)
 
-    p_start = sub.add_parser("start", help="Optimize macOS + launch Sony RemotePlay or chiaki-ng with Trackpad+KBM DualSense bridge")
-    p_start.add_argument("--client", default="sony", choices=["sony", "chiaki"], help="Remote Play client (default: sony)")
+    p_start = sub.add_parser(
+        "start", help="Optimize macOS + launch Sony RemotePlay or chiaki-ng with Trackpad+KBM DualSense bridge"
+    )
+    p_start.add_argument(
+        "--client", default="sony", choices=["sony", "chiaki"], help="Remote Play client (default: sony)"
+    )
     p_start.add_argument("--profile", default="gta6", help="Profile name in profiles/ or path to JSON (default: gta6)")
     p_start.add_argument(
         "--preset",
@@ -488,8 +509,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="chiaki-ng stream bitrate/resolution preset (default: auto)",
     )
     p_start.add_argument("--host", default="1.1.1.1", help="WAN probe target host when --preset auto")
-    p_start.add_argument("--privileged", action="store_true", help="Pause awdl0/llw0 (Wi-Fi jitter fix), boost kernel UDP buffers & process priority")
-    p_start.add_argument("--gui-sudo", action="store_true", help="Use native macOS Touch ID / password dialog instead of terminal sudo")
+    p_start.add_argument(
+        "--privileged",
+        action="store_true",
+        help="Pause awdl0/llw0 (Wi-Fi jitter fix), boost kernel UDP buffers & process priority",
+    )
+    p_start.add_argument(
+        "--gui-sudo", action="store_true", help="Use native macOS Touch ID / password dialog instead of terminal sudo"
+    )
     p_start.add_argument(
         "--bypass-firewall",
         nargs="?",
@@ -514,12 +541,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Fallback to Cloudflare WARP MASQUE (TCP-443) if Tailscale exit node is unavailable or blocked",
     )
-    p_start.add_argument("--hybrid", action="store_true", help="Hybrid Hot-Swap mode: start on physical DualSense with shared Ping/HUD/Mic shortcuts and instant '0' Trackpad switch")
-    p_start.add_argument("--controller", "--no-kbm", dest="controller", action="store_true", help="Use physical DualSense/controller natively (keep WAN/macOS optimizations, skip virtual KBM pad)")
-    p_start.add_argument("--keep-chiaki-kbm", action="store_true", help="Do not disable chiaki-ng built-in keyboard/mouse-touch")
+    p_start.add_argument(
+        "--hybrid",
+        action="store_true",
+        help="Hybrid Hot-Swap mode: start on physical DualSense with shared Ping/HUD/Mic shortcuts and instant '0' Trackpad switch",
+    )
+    p_start.add_argument(
+        "--controller",
+        "--no-kbm",
+        dest="controller",
+        action="store_true",
+        help="Use physical DualSense/controller natively (keep WAN/macOS optimizations, skip virtual KBM pad)",
+    )
+    p_start.add_argument(
+        "--keep-chiaki-kbm", action="store_true", help="Do not disable chiaki-ng built-in keyboard/mouse-touch"
+    )
     p_start.add_argument("--chiaki-app", default=None, help="Custom path to chiaki-ng.app")
     p_start.add_argument("--sony-app", default=None, help="Custom path to Sony RemotePlay.app")
-    p_start.add_argument("--dry-run", action="store_true", help="Show planned actions without modifying system or launching")
+    p_start.add_argument(
+        "--dry-run", action="store_true", help="Show planned actions without modifying system or launching"
+    )
     p_start.set_defaults(func=cmd_start)
 
     p_tun = sub.add_parser(
@@ -560,22 +601,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_help.add_argument("--json", action="store_true", help="Emit JSON (status)")
     p_help.set_defaults(func=cmd_helper)
 
-    p_cfg = sub.add_parser("config", help="Get/set user config (~/.config/senza/config.json): exit-node, network profiles, ...")
+    p_cfg = sub.add_parser(
+        "config", help="Get/set user config (~/.config/senza/config.json): exit-node, network profiles, ..."
+    )
     p_cfg.add_argument("config_action", choices=["show", "get", "set", "unset", "path"])
     p_cfg.add_argument("key", nargs="?", default=None, help="Dotted key or alias (exit-node, exit-nodes, probe-host)")
-    p_cfg.add_argument("value", nargs="?", default=None, help="Value for `set` (true/false, numbers and a,b,c lists parsed)")
+    p_cfg.add_argument(
+        "value", nargs="?", default=None, help="Value for `set` (true/false, numbers and a,b,c lists parsed)"
+    )
     p_cfg.add_argument("--json", action="store_true", help="Emit JSON output")
     p_cfg.set_defaults(func=cmd_config)
 
-    p_exp = sub.add_parser("export-profile", help="Validate JSON profile and write runtime_profile.cfg for live hot-reload")
+    p_exp = sub.add_parser(
+        "export-profile", help="Validate JSON profile and write runtime_profile.cfg for live hot-reload"
+    )
     p_exp.add_argument("--profile", default="gta6", help="Profile name in profiles/ or path to JSON (default: gta6)")
-    p_exp.add_argument("--output", default=None, help="Optional custom output path (default: ~/.local/share/senza/runtime_profile.cfg)")
+    p_exp.add_argument(
+        "--output", default=None, help="Optional custom output path (default: ~/.local/share/senza/runtime_profile.cfg)"
+    )
     p_exp.add_argument("--json", action="store_true", help="Emit JSON confirmation")
     p_exp.set_defaults(func=cmd_export_profile)
 
-    p_rest = sub.add_parser("restore", help="Recover awdl0/llw0, DNS, VPN/WARP, and sysctl settings after a crash (optional --plist)")
+    p_rest = sub.add_parser(
+        "restore", help="Recover awdl0/llw0, DNS, VPN/WARP, and sysctl settings after a crash (optional --plist)"
+    )
     p_rest.add_argument("--plist", action="store_true", help="Also restore backed-up com.chiaki.Chiaki preferences")
-    p_rest.add_argument("--gui-sudo", action="store_true", help="Use native macOS Touch ID / password dialog for restore")
+    p_rest.add_argument(
+        "--gui-sudo", action="store_true", help="Use native macOS Touch ID / password dialog for restore"
+    )
     p_rest.set_defaults(func=cmd_restore)
 
     return p

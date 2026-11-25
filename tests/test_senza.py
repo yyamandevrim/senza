@@ -21,9 +21,7 @@ class TestSenza(unittest.TestCase):
     def setUp(self) -> None:
         os.environ["SENZA_CONFIG"] = str(Path(_TEST_CFG_DIR) / "config.json")
         os.environ.pop("SENZA_EXIT_NODE", None)
-        Path(os.environ["SENZA_CONFIG"]).write_text(
-            '{"tailscale": {"exit_node": "100.101.102.103"}}', encoding="utf-8"
-        )
+        Path(os.environ["SENZA_CONFIG"]).write_text('{"tailscale": {"exit_node": "100.101.102.103"}}', encoding="utf-8")
 
     def test_parse_ping_and_recommend_presets(self) -> None:
         sample = "\n".join(
@@ -41,13 +39,19 @@ class TestSenza(unittest.TestCase):
         self.assertEqual(loss, 0.0)
         self.assertLess(jitter, 5.0)
 
-        high = recommend_preset(NetworkReport(host="h", rtt_median_ms=med, jitter_ms=jitter, packet_loss_pct=loss, ipv4_ok=True))
+        high = recommend_preset(
+            NetworkReport(host="h", rtt_median_ms=med, jitter_ms=jitter, packet_loss_pct=loss, ipv4_ok=True)
+        )
         self.assertEqual(high.name, "wan-high")
 
-        balanced = recommend_preset(NetworkReport(host="h", rtt_median_ms=52.0, jitter_ms=14.0, packet_loss_pct=1.0, ipv4_ok=True))
+        balanced = recommend_preset(
+            NetworkReport(host="h", rtt_median_ms=52.0, jitter_ms=14.0, packet_loss_pct=1.0, ipv4_ok=True)
+        )
         self.assertEqual(balanced.name, "wan-balanced")
 
-        lowbw = recommend_preset(NetworkReport(host="h", rtt_median_ms=45.0, jitter_ms=10.0, packet_loss_pct=3.5, ipv4_ok=True))
+        lowbw = recommend_preset(
+            NetworkReport(host="h", rtt_median_ms=45.0, jitter_ms=10.0, packet_loss_pct=3.5, ipv4_ok=True)
+        )
         self.assertEqual(lowbw.name, "wan-lowbw")
         self.assertEqual(lowbw.resolution, "720p")
         self.assertEqual(lowbw.fps, 60)
@@ -57,12 +61,12 @@ class TestSenza(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = export_runtime_config(profile, Path(tmp) / "runtime.cfg")
             text = out.read_text(encoding="utf-8")
-            self.assertIn("toggle_capture_key=29", text)    # '0' key (Karabiner-safe)
-            self.assertIn("toggle_vehicle_key=5", text)     # G
+            self.assertIn("toggle_capture_key=29", text)  # '0' key (Karabiner-safe)
+            self.assertIn("toggle_vehicle_key=5", text)  # G
             self.assertIn("trackpad_mode=1", text)
-            self.assertIn("on_foot.59=L2", text)            # CapsLock/LeftControl -> L2 Aim
-            self.assertIn("on_foot.200=R2", text)           # Trackpad click -> R2 Shoot
-            self.assertIn("vehicle.13=R2", text)            # W -> R2 gas in vehicle mode
+            self.assertIn("on_foot.59=L2", text)  # CapsLock/LeftControl -> L2 Aim
+            self.assertIn("on_foot.200=R2", text)  # Trackpad click -> R2 Shoot
+            self.assertIn("vehicle.13=R2", text)  # W -> R2 gas in vehicle mode
 
     def test_stream_preset_defaults_backup_and_apply(self) -> None:
         calls: list[list[str]] = []
@@ -73,7 +77,9 @@ class TestSenza(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             backup = Path(tmp) / "backup.plist"
-            preset = recommend_preset(NetworkReport(host="h", rtt_median_ms=45.0, jitter_ms=12.0, packet_loss_pct=0.5, ipv4_ok=True))
+            preset = recommend_preset(
+                NetworkReport(host="h", rtt_median_ms=45.0, jitter_ms=12.0, packet_loss_pct=0.5, ipv4_ok=True)
+            )
             apply_stream_preset(preset, disable_builtin_kbm=True, dry_run=False, backup_path=backup, runner=fake_runner)
 
         self.assertEqual(calls[0][:2], ["defaults", "export"])
@@ -177,6 +183,7 @@ class TestSenza(unittest.TestCase):
     def test_firewall_bypass_tailscale_auto_up_exit_node_ping_and_rollback(self) -> None:
         import json
         from unittest.mock import patch
+
         from senza.config import configured_exit_node
         from senza.firewall_bypass import FirewallBypass
 
@@ -259,6 +266,7 @@ class TestSenza(unittest.TestCase):
     def test_firewall_bypass_tailscale_pending_access_warning(self) -> None:
         import json
         from unittest.mock import patch
+
         from senza.firewall_bypass import FirewallBypass
 
         calls: list[list[str]] = []
@@ -290,6 +298,7 @@ class TestSenza(unittest.TestCase):
     def test_find_tailscale_cli_prefers_live_backend_and_inspect(self) -> None:
         import json
         from unittest.mock import patch
+
         from senza.firewall_bypass import find_tailscale_cli, inspect_tailscale_exit_node
 
         dead_cli = "/opt/homebrew/bin/tailscale"
@@ -330,6 +339,7 @@ class TestSenza(unittest.TestCase):
         import json
         import plistlib
         from unittest.mock import patch
+
         from senza.firewall_bypass import (
             install_tunnel_launch_agent,
             system_tunnel_down,
@@ -405,7 +415,9 @@ class TestSenza(unittest.TestCase):
                 patch("senza.firewall.warp.find_warp_cli", return_value=warp_bin),
                 # Simulate FortiGate blocking controlplane.tailscale.com
                 patch("senza.firewall.probes.probe_tailscale_controlplane", return_value=(False, "blocked")),
-                patch("senza.firewall.probes.probe_egress_via_tunnel", return_value=(True, "egress IP 198.51.100.7 (TR)")),
+                patch(
+                    "senza.firewall.probes.probe_egress_via_tunnel", return_value=(True, "egress IP 198.51.100.7 (TR)")
+                ),
                 patch("time.sleep", return_value=None),
             ):
                 up_notes = system_tunnel_up(
@@ -420,7 +432,9 @@ class TestSenza(unittest.TestCase):
                 idx_wc = calls.index([warp_bin, "connect"])
                 idx_tu = calls.index([ts_bin, "up"])
                 idx_wd = calls.index([warp_bin, "disconnect"])
-                idx_ex = calls.index([ts_bin, "set", "--exit-node=100.101.102.103", "--exit-node-allow-lan-access=true"])
+                idx_ex = calls.index(
+                    [ts_bin, "set", "--exit-node=100.101.102.103", "--exit-node-allow-lan-access=true"]
+                )
                 self.assertLess(idx_wc, idx_tu)
                 self.assertLess(idx_tu, idx_wd)
                 self.assertLess(idx_wd, idx_ex)

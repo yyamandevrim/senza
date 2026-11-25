@@ -7,8 +7,9 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* NaN-safe: a NaN maps to `lo` instead of propagating into int casts (which is UB). */
 static float clampf(float v, float lo, float hi) {
-    if (v < lo) return lo;
+    if (!(v >= lo)) return lo;
     if (v > hi) return hi;
     return v;
 }
@@ -161,10 +162,45 @@ void psr_config_init_default(PsrConfig *cfg) {
     add_binding(cfg->aircraft, &cfg->aircraft_count, 21, PSR_BTN_DPAD_LEFT);     /* 4 = Radio / Hold: Vehicle Menu */
 }
 
+static float sanitize_float(float v, float fallback, float lo, float hi) {
+    if (!isfinite(v)) return fallback;
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static int clamp_count(int n) {
+    if (n < 0) return 0;
+    if (n > PSR_MAX_BINDINGS) return PSR_MAX_BINDINGS;
+    return n;
+}
+
+void psr_config_sanitize(PsrConfig *cfg) {
+    if (!cfg) return;
+    PsrConfig def;
+    psr_config_init_default(&def);
+    cfg->walk_scale = sanitize_float(cfg->walk_scale, def.walk_scale, 0.05f, 1.0f);
+    cfg->sensitivity = sanitize_float(cfg->sensitivity, def.sensitivity, 0.05f, 20.0f);
+    cfg->ads_sensitivity_scale = sanitize_float(cfg->ads_sensitivity_scale, def.ads_sensitivity_scale, 0.05f, 4.0f);
+    cfg->sniper_sensitivity_scale =
+        sanitize_float(cfg->sniper_sensitivity_scale, def.sniper_sensitivity_scale, 0.05f, 4.0f);
+    cfg->deadzone = sanitize_float(cfg->deadzone, def.deadzone, 0.0f, 0.95f);
+    cfg->curve_exponent = sanitize_float(cfg->curve_exponent, def.curve_exponent, 0.2f, 4.0f);
+    cfg->smoothing = sanitize_float(cfg->smoothing, def.smoothing, 0.0f, 0.98f);
+    cfg->decay_half_life_ms = sanitize_float(cfg->decay_half_life_ms, def.decay_half_life_ms, 1.0f, 1000.0f);
+    cfg->max_velocity_px_per_sec =
+        sanitize_float(cfg->max_velocity_px_per_sec, def.max_velocity_px_per_sec, 50.0f, 100000.0f);
+    cfg->trackpad_accel = sanitize_float(cfg->trackpad_accel, def.trackpad_accel, 0.1f, 5.0f);
+    cfg->on_foot_count = clamp_count(cfg->on_foot_count);
+    cfg->vehicle_count = clamp_count(cfg->vehicle_count);
+    cfg->aircraft_count = clamp_count(cfg->aircraft_count);
+}
+
 void psr_mapper_init(PsrMapper *m, const PsrConfig *cfg) {
     memset(m, 0, sizeof(*m));
     if (cfg) {
         m->cfg = *cfg;
+        psr_config_sanitize(&m->cfg);
     } else {
         psr_config_init_default(&m->cfg);
     }
@@ -374,13 +410,13 @@ bool psr_mapper_handle_key(PsrMapper *m, int input_code, bool is_down) {
 }
 
 void psr_mapper_add_mouse_delta(PsrMapper *m, float dx, float dy) {
-    if (!m->capture_active) return;
+    if (!m->capture_active || !isfinite(dx) || !isfinite(dy)) return;
     m->pending_dx += dx;
     m->pending_dy += dy;
 }
 
 void psr_mapper_add_scroll(PsrMapper *m, float dx, float dy) {
-    if (!m->capture_active) return;
+    if (!m->capture_active || !isfinite(dx) || !isfinite(dy)) return;
 
     /* While aiming on foot (L2 held), two-finger vertical scroll holds D-Pad Up/Down for sniper scope zoom */
     if (!m->vehicle_mode && !m->aircraft_mode && m->pad.l2 > 0) {
@@ -454,6 +490,7 @@ void psr_mapper_tick(PsrMapper *m, float dt_ms) {
         return;
     }
 
+    if (!isfinite(dt_ms)) dt_ms = 8.0f;
     if (dt_ms <= 0.1f) dt_ms = 0.1f;
     if (dt_ms > 100.0f) dt_ms = 100.0f;
     float dt_sec = dt_ms / 1000.0f;
