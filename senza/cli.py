@@ -17,6 +17,7 @@ from .app_bridge import (
     PATCHED_APP,
     PATCHED_SONY_APP,
     STATE_DIR,
+    bundle_status,
     ensure_dylib_built,
     find_chiaki_app,
     find_sony_app,
@@ -26,6 +27,7 @@ from .app_bridge import (
 )
 from .firewall import (
     FirewallBypass,
+    install_repatch_agent,
     install_tunnel_launch_agent,
     probe_psn_firewall,
     restore_firewall_bypass,
@@ -33,6 +35,7 @@ from .firewall import (
     system_tunnel_ensure,
     system_tunnel_status,
     system_tunnel_up,
+    uninstall_repatch_agent,
     uninstall_tunnel_launch_agent,
 )
 from .net_probe import probe_network
@@ -113,7 +116,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "system_tunnel": sys_tun,
             "recommended_preset": dataclasses.asdict(preset),
             "sony_app": str(sony) if sony else None,
-            "sony_bundle_ready": PATCHED_SONY_APP.exists(),
+            "sony_bundle_ready": bundle_status(sony, "sony") == "ready",
+            "sony_bundle_status": bundle_status(sony, "sony"),
+            "chiaki_bundle_status": bundle_status(chiaki, "chiaki"),
             "chiaki_app": str(chiaki) if chiaki else None,
             "patched_bundle_ready": PATCHED_APP.exists(),
             "helper": privileged.helper_status(),
@@ -164,6 +169,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    if args.install_watch or args.uninstall_watch:
+        notes = install_repatch_agent() if args.install_watch else uninstall_repatch_agent()
+        for n in notes:
+            print(f"  [setup] {n}")
+        return 0
+    if args.if_needed:
+        targets = [("sony", find_sony_app(args.sony_app)), ("chiaki", find_chiaki_app(args.chiaki_app))]
+        stale = [(c, app) for c, app in targets if app is not None and bundle_status(app, c) == "stale"]
+        if not stale:
+            print("  [setup] Bundles up to date")
+            return 0
+        ensure_dylib_built(client="sony")
+        for client, app in stale:
+            print(f"  [setup] {app.name} changed since last patch, re-patching...", flush=True)
+            prepare_patched_app(app, client=client, force=False)
+            print(f"  [setup] {app.name} ready")
+        return 0
     print("1/3 Compiling Senza native Trackpad+Keyboard DualSense bridges (Sony + chiaki-ng)...")
     sony_dylib = ensure_dylib_built(client="sony", force=args.force)
     chiaki_dylib = ensure_dylib_built(client="chiaki", force=args.force)
@@ -634,6 +656,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.add_argument("--chiaki-app", default=None, help="Custom path to chiaki-ng.app")
     p_setup.add_argument("--sony-app", default=None, help="Custom path to Sony RemotePlay.app")
     p_setup.add_argument("--force", action="store_true", help="Force rebuild of dylibs and patched app bundles")
+    p_setup.add_argument("--if-needed", action="store_true", help="Only re-patch bundles whose client app changed")
+    p_setup.add_argument(
+        "--install-watch", action="store_true", help="LaunchAgent: re-patch automatically when the client app updates"
+    )
+    p_setup.add_argument("--uninstall-watch", action="store_true", help="Remove the re-patch LaunchAgent")
     p_setup.set_defaults(func=cmd_setup)
 
     p_start = sub.add_parser(

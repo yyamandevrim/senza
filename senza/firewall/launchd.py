@@ -100,3 +100,46 @@ def uninstall_tunnel_launch_agent(
     else:
         notes.append("System tunnel LaunchAgent is not installed")
     return notes
+
+
+REPATCH_AGENT_LABEL = "com.senza.repatch-watch"
+REPATCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{REPATCH_AGENT_LABEL}.plist"
+REPATCH_WATCH_PATHS = (
+    "/Applications/RemotePlay.app/Contents/Info.plist",
+    "/Applications/chiaki-ng.app/Contents/Info.plist",
+)
+
+
+def install_repatch_agent(
+    runner: Runner = _default_runner, plist_path: Path = REPATCH_AGENT_PATH, cli_path: str | None = None
+) -> list[str]:
+    """Re-patch the Remote Play / chiaki-ng bundles as soon as the App Store updates them (launchd WatchPaths)."""
+    senza_cli = cli_path or _resolve_senza_cli_path()
+    TUNNEL_WATCHDOG_LOG.parent.mkdir(parents=True, exist_ok=True)
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    plist_data: dict[str, Any] = {
+        "Label": REPATCH_AGENT_LABEL,
+        "ProgramArguments": [senza_cli, "setup", "--if-needed"],
+        "WatchPaths": list(REPATCH_WATCH_PATHS),
+        "ThrottleInterval": 60,
+        "StandardOutPath": str(TUNNEL_WATCHDOG_LOG.with_name("repatch.log")),
+        "StandardErrorPath": str(TUNNEL_WATCHDOG_LOG.with_name("repatch.log")),
+        "EnvironmentVariables": {
+            "PATH": f"{Path.home()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        },
+    }
+    plist_path.write_bytes(plistlib.dumps(plist_data))
+    domain = f"gui/{os.getuid()}"
+    runner(["launchctl", "bootout", domain, str(plist_path)])
+    res = runner(["launchctl", "bootstrap", domain, str(plist_path)])
+    if res.returncode == 0:
+        return [f"Installed {REPATCH_AGENT_LABEL}: client updates are re-patched automatically"]
+    return [f"Warning: launchctl bootstrap returned {res.returncode} ({res.stderr.strip() or res.stdout.strip()})"]
+
+
+def uninstall_repatch_agent(runner: Runner = _default_runner, plist_path: Path = REPATCH_AGENT_PATH) -> list[str]:
+    if not plist_path.exists():
+        return ["Re-patch watcher is not installed"]
+    runner(["launchctl", "bootout", f"gui/{os.getuid()}", str(plist_path)])
+    plist_path.unlink(missing_ok=True)
+    return [f"Removed {plist_path}"]

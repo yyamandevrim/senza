@@ -65,5 +65,45 @@ class TestTunnelNotifications(unittest.TestCase):
             self.assertFalse(notify("t", "b", runner=lambda c: ok(c)))
 
 
+class TestBundleFreshness(unittest.TestCase):
+    def test_status_tracks_client_updates(self) -> None:
+        from senza import app_bridge
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "RemotePlay.app"
+            binary = src / "Contents" / "MacOS" / "RemotePlay"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"v1")
+            patched = root / "RemotePlay-patched.app"
+            stamp = root / "stamp"
+            with (
+                mock.patch.multiple(app_bridge, PATCHED_SONY_APP=patched, SONY_STAMP_FILE=stamp),
+                mock.patch.object(app_bridge, "find_app_binary", return_value=binary),
+            ):
+                self.assertEqual(app_bridge.bundle_status(None, "sony"), "missing")
+                self.assertEqual(app_bridge.bundle_status(src, "sony"), "stale")  # never patched
+                patched.mkdir()
+                stamp.write_text(app_bridge._bundle_signature_stamp(src, "sony"))
+                self.assertEqual(app_bridge.bundle_status(src, "sony"), "ready")
+                binary.write_bytes(b"v2-after-app-store-update")
+                self.assertEqual(app_bridge.bundle_status(src, "sony"), "stale")
+
+    def test_repatch_agent_watches_client_bundles(self) -> None:
+        import plistlib
+
+        from senza.firewall import launchd
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plist = Path(tmp) / "agent.plist"
+            with mock.patch.object(launchd, "TUNNEL_WATCHDOG_LOG", Path(tmp) / "x.log"):
+                launchd.install_repatch_agent(runner=ok, plist_path=plist, cli_path="/x/senza")
+            data = plistlib.loads(plist.read_bytes())
+            self.assertEqual(data["ProgramArguments"], ["/x/senza", "setup", "--if-needed"])
+            self.assertIn("/Applications/RemotePlay.app/Contents/Info.plist", data["WatchPaths"])
+            launchd.uninstall_repatch_agent(runner=ok, plist_path=plist)
+            self.assertFalse(plist.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

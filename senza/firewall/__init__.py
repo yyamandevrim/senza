@@ -21,9 +21,12 @@ from .common import (  # noqa: F401
 from .launchd import (  # noqa: F401
     LAUNCH_AGENT_LABEL,
     LAUNCH_AGENT_PATH,
+    REPATCH_AGENT_PATH,
     TUNNEL_WATCHDOG_LOG,
     _resolve_senza_cli_path,
+    install_repatch_agent,
     install_tunnel_launch_agent,
+    uninstall_repatch_agent,
     uninstall_tunnel_launch_agent,
 )
 from .netsvc import (  # noqa: F401

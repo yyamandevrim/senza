@@ -154,6 +154,20 @@ def _bundle_signature_stamp(app_bundle: Path, client: str) -> str:
     return f"{app_bundle.resolve()}:{st.st_size}:{int(st.st_mtime)}:icon={icon_mtime}"
 
 
+def bundle_status(source_app: Path | None, client: str) -> str:
+    """'missing' (client not installed), 'stale' (not patched yet / client updated since), or 'ready'."""
+    if source_app is None:
+        return "missing"
+    patched = PATCHED_SONY_APP if client == "sony" else PATCHED_APP
+    stamp_file = SONY_STAMP_FILE if client == "sony" else CHIAKI_STAMP_FILE
+    try:
+        current = _bundle_signature_stamp(source_app, client=client)
+        saved = stamp_file.read_text(encoding="utf-8").strip()
+    except (OSError, FileNotFoundError, RuntimeError):
+        return "stale"
+    return "ready" if patched.exists() and saved == current else "stale"
+
+
 def prepare_patched_app(source_app: Path, client: str = "chiaki", force: bool = False) -> Path:
     """Clone target .app locally and ad-hoc sign without Hardened Runtime so DYLD_INSERT_LIBRARIES works."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
