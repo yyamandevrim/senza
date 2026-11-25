@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..config import configured_exit_node
+from ..config import configured_exit_node, configured_exit_nodes
 from ..state import atomic_write_json, read_json_dict, remove_file
 from . import netsvc as _netsvc
 from . import probes as _probes
@@ -50,6 +50,7 @@ class FirewallBypass:
         self.fallback_warp = fallback_warp
         self.persistent = persistent
         self.system_state_file = system_state_file
+        self.selected_exit_node: str | None = None
 
         self._active = False
         self._dns_service: str | None = None
@@ -393,6 +394,14 @@ class FirewallBypass:
                 return notes
 
         self._prev_tailscale_exit_node = _tailscale._tailscale_active_exit_node(data)
+        candidates = [] if self.exit_node else configured_exit_nodes()
+        if len(candidates) > 1:
+            chosen, ranked = _tailscale.select_exit_node(ts, candidates, data, self.runner)
+            if chosen and chosen != target_node:
+                timing = ", ".join(f"{n} {f'{r:.0f} ms' if r is not None else 'n/a'}" for n, r in ranked)
+                notes.append(f"Picked exit node {chosen} (lowest RTT: {timing})")
+                target_node = chosen
+        self.selected_exit_node = target_node
         peer = _tailscale._tailscale_find_peer(data, target_node)
 
         # Right after `tailscale up`, the netmap peer table can take a couple seconds to populate.

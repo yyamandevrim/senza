@@ -131,5 +131,40 @@ class TestOnboard(unittest.TestCase):
         self.assertTrue({"clt", "bridges", "client", "bundle", "cli", "helper"} <= {c["id"] for c in data["checks"]})
 
 
+class TestExitNodeSelection(unittest.TestCase):
+    DATA = {
+        "Peer": {
+            "a": {"TailscaleIPs": ["100.64.0.1"], "ExitNodeOption": True, "Online": True, "HostName": "home"},
+            "b": {"TailscaleIPs": ["100.64.0.2"], "ExitNodeOption": True, "Online": True, "HostName": "office"},
+            "c": {"TailscaleIPs": ["100.64.0.3"], "ExitNodeOption": True, "Online": False, "HostName": "off"},
+            "d": {"TailscaleIPs": ["100.64.0.4"], "ExitNodeOption": False, "Online": True, "HostName": "noexit"},
+        }
+    }
+
+    def _runner(self, rtts: dict[str, float | None]):  # type: ignore[no-untyped-def]
+        def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+            node = cmd[-1]
+            rtt = rtts.get(node)
+            if rtt is None:
+                return subprocess.CompletedProcess(cmd, 1, "", "timeout")
+            return ok(cmd, f"pong from x ({node}) via DERP(fra) in {rtt}ms\n")
+
+        return run
+
+    def test_faster_node_wins_only_beyond_margin(self) -> None:
+        from senza.firewall.tailscale import select_exit_node
+
+        cands = ["100.64.0.1", "100.64.0.2", "100.64.0.3", "100.64.0.4"]
+        chosen, ranked = select_exit_node("ts", cands, self.DATA, self._runner({"100.64.0.1": 40, "100.64.0.2": 12}))
+        self.assertEqual(chosen, "100.64.0.2")
+        self.assertEqual({n for n, _ in ranked}, {"100.64.0.1", "100.64.0.2"})  # offline / non-exit skipped
+        chosen, _ = select_exit_node("ts", cands, self.DATA, self._runner({"100.64.0.1": 18, "100.64.0.2": 12}))
+        self.assertEqual(chosen, "100.64.0.1")  # within 10 ms: keep the primary
+        chosen, _ = select_exit_node("ts", cands, self.DATA, self._runner({}))
+        self.assertEqual(chosen, "100.64.0.1")  # nothing answers: primary
+        chosen, _ = select_exit_node("ts", ["100.64.0.3"], self.DATA, self._runner({}))
+        self.assertEqual(chosen, "100.64.0.3")  # no usable node: return primary for a clear error later
+
+
 if __name__ == "__main__":
     unittest.main()

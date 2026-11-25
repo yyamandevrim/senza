@@ -120,6 +120,13 @@ senza tunnel install-service             # 45 s auto-heal LaunchAgent (re-reads 
 
 Resolution order: `--exit-node` flag › `$SENZA_EXIT_NODE` › config file › first exit-node peer in your tailnet.
 
+With more than one exit node, Senza picks the fastest online one each time it connects. It keeps the first one
+unless another is more than 10 ms faster:
+
+```bash
+senza config set exit-nodes 100.x.y.z,100.a.b.c
+```
+
 ### Per-network profiles & connection history
 
 Senza recognises the network you're on by its router: the `NetworkSignature` macOS publishes, so it needs no

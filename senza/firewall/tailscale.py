@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,47 @@ def resolve_exit_node(
         return node
     ts_cli = find_tailscale_cli(runner)
     return _tailscale_discover_exit_node(ts_cli, runner) if ts_cli else None
+
+
+STICKY_MARGIN_MS = 10.0  # keep the primary unless another node is clearly faster
+
+
+def _ping_ms(ts_cli: str, node: str, runner: Runner) -> float | None:
+    res = runner([ts_cli, "ping", "-c", "1", "--timeout=2s", node])
+    m = re.search(r"\bin\s+([0-9.]+)\s*ms", res.stdout or "")
+    return float(m.group(1)) if res.returncode == 0 and m else None
+
+
+def select_exit_node(
+    ts_cli: str, candidates: list[str], data: dict[str, Any], runner: Runner = _default_runner
+) -> tuple[str | None, list[tuple[str, float | None]]]:
+    """Pick the online, exit-capable candidate with the lowest `tailscale ping` RTT.
+
+    The first candidate (the configured primary) is kept unless another is more than STICKY_MARGIN_MS faster,
+    so the route doesn't flap between two similar nodes. Returns (choice, [(node, rtt_ms | None), ...]).
+    """
+    usable = []
+    for node in candidates:
+        peer = _tailscale_find_peer(data, node)
+        if peer and peer.get("ExitNodeOption") and peer.get("Online"):
+            usable.append(node)
+    if not usable:
+        return (candidates[0] if candidates else None), [(n, None) for n in candidates]
+    if len(usable) == 1:
+        return usable[0], [(usable[0], None)]
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(4, len(usable))) as pool:
+        rtts = list(pool.map(lambda n: _ping_ms(ts_cli, n, runner), usable))
+    ranked = list(zip(usable, rtts, strict=True))
+    reachable = [(n, r) for n, r in ranked if r is not None]
+    if not reachable:
+        return usable[0], ranked
+    best, best_rtt = min(reachable, key=lambda x: x[1])
+    primary_rtt = dict(reachable).get(usable[0])
+    if primary_rtt is not None and primary_rtt - best_rtt <= STICKY_MARGIN_MS:
+        return usable[0], ranked
+    return best, ranked
 
 
 def inspect_tailscale_exit_node(

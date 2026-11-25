@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import notify as _notify
+from ..config import configured_exit_nodes
 from ..state import atomic_write_json, read_json_dict
 from . import bypass as _bypass
 from . import probes as _probes
@@ -93,9 +94,12 @@ def system_tunnel_up(
     if not target:
         return [f"Warning: {NO_EXIT_NODE_HINT}."]
 
+    # Pin the node only when the user asked for one; with a configured candidate list the bypass
+    # picks the fastest online node itself.
+    pinned = exit_node or (target if len(configured_exit_nodes()) < 2 else None)
     fb = _bypass.FirewallBypass(
         mode="tailscale",
-        exit_node=target,
+        exit_node=pinned,
         dry_run=dry_run,
         runner=runner,
         state_file=state_file,
@@ -121,7 +125,7 @@ def system_tunnel_up(
 
     merged = {
         "persistent": True,
-        "target_exit_node": target,
+        "target_exit_node": fb.selected_exit_node or target,
         "active_backend": active_backend,
         "warp_bootstrap": warp_bootstrap,
         "fallback_warp": fallback_warp,
@@ -197,14 +201,16 @@ def system_tunnel_ensure(
             active = _tailscale._tailscale_active_exit_node(data)
             ex_st = data.get("ExitNodeStatus")
             ex_online = isinstance(ex_st, dict) and bool(ex_st.get("Online"))
-            peer = _tailscale._tailscale_find_peer(data, target)
-            peer_ips = {str(ip).strip().lower() for ip in (peer.get("TailscaleIPs") or [])} if peer else set()
-            if active and ex_online and (active.lower() == target.lower() or active.lower() in peer_ips):
-                return [f"OK: Tailscale exit node {target} already online & healthy"]
+            candidates = [exit_node] if exit_node else (configured_exit_nodes() or [target])
+            for cand in candidates:
+                peer = _tailscale._tailscale_find_peer(data, cand)
+                peer_ips = {str(ip).strip().lower() for ip in (peer.get("TailscaleIPs") or [])} if peer else set()
+                if active and ex_online and (active.lower() == cand.lower() or active.lower() in peer_ips):
+                    return [f"OK: Tailscale exit node {cand} already online & healthy"]
 
     prev_backend = saved.get("active_backend")
     notes = system_tunnel_up(
-        exit_node=target,
+        exit_node=exit_node,
         warp_bootstrap=warp_bootstrap,
         fallback_warp=fallback_warp,
         dry_run=False,
