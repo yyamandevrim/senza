@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .state import atomic_write_text
+
 # macOS HIToolbox virtual keycodes + synthetic mouse codes matching mapper_core.h
 KEYCODE_MAP: dict[str, int] = {
     "A": 0, "S": 1, "D": 2, "F": 3, "H": 4, "G": 5, "Z": 6, "X": 7, "C": 8, "V": 9,
@@ -157,5 +159,5 @@ def export_runtime_config(profile: dict[str, Any], out_path: Path) -> Path:
         lines.append(f"aircraft.{_key_to_code(key_name)}={target}")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write_text(out_path, "\n".join(lines) + "\n")
     return out_path

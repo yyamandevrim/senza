@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .state import atomic_write_json, read_json_dict, remove_file
+
 STATE_DIR = Path.home() / ".local" / "share" / "senza"
 BYPASS_STATE_FILE = STATE_DIR / "bypass_state.json"
 SYSTEM_TUNNEL_STATE_FILE = STATE_DIR / "system_tunnel.json"
@@ -447,6 +449,7 @@ class FirewallBypass:
         warp_bootstrap: str = "auto",
         fallback_warp: bool = False,
         persistent: bool = False,
+        system_state_file: Path = SYSTEM_TUNNEL_STATE_FILE,
     ) -> None:
         self.mode = mode.strip()
         self.exit_node = exit_node.strip() if exit_node and exit_node.strip() else None
@@ -457,6 +460,7 @@ class FirewallBypass:
         self.warp_bootstrap = warp_bootstrap.strip().lower() if warp_bootstrap else "auto"
         self.fallback_warp = fallback_warp
         self.persistent = persistent
+        self.system_state_file = system_state_file
 
         self._active = False
         self._dns_service: str | None = None
@@ -473,7 +477,6 @@ class FirewallBypass:
     def _write_state(self) -> None:
         if self.dry_run:
             return
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "dns_service": self._dns_service,
             "prev_dns": self._prev_dns,
@@ -485,16 +488,20 @@ class FirewallBypass:
             "tailscale_cli": self._tailscale_cli,
             "vpn_started_by_us": self._vpn_started_by_us,
         }
-        self.state_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        atomic_write_json(self.state_file, payload)
 
     def _clear_state(self) -> None:
         if self.dry_run:
             return
-        try:
-            if self.state_file.exists():
-                self.state_file.unlink()
-        except OSError:
-            pass
+        remove_file(self.state_file)
+
+    def _system_tunnel_owns_routing(self) -> bool:
+        """True when this is a per-session bypass and the persistent system-wide tunnel is managed.
+
+        The system tunnel (and its LaunchAgent) owns Tailscale exit-node + WARP routing, so a
+        Remote Play session ending must not tear those down underneath it.
+        """
+        return _session_defers_to_system_tunnel(self.state_file, self.system_state_file)
 
     def _apply_clean_dns(self) -> list[str]:
         notes: list[str] = []
@@ -978,6 +985,15 @@ class FirewallBypass:
             return notes
         self._active = False
 
+        if self._system_tunnel_owns_routing() and (
+            self._warp_connected_by_us or self._tailscale_exit_set_by_us or self._tailscale_started_by_us
+        ):
+            notes.append("Kept Tailscale/WARP routing up (owned by system-wide tunnel `senza tunnel on`)")
+            self._warp_connected_by_us = False
+            self._tailscale_exit_set_by_us = False
+            self._tailscale_started_by_us = False
+            self._prev_tailscale_exit_node = None
+
         if self._warp_connected_by_us and self._warp_cli:
             res = self.runner([self._warp_cli, "disconnect"])
             if res.returncode == 0:
@@ -1042,20 +1058,31 @@ class FirewallBypass:
         self.exit()
 
 
+def _session_defers_to_system_tunnel(state_file: Path, system_state_file: Path) -> bool:
+    try:
+        is_session = state_file.resolve() != system_state_file.resolve()
+    except OSError:
+        is_session = state_file != system_state_file
+    return is_session and system_state_file.exists()
+
+
 def restore_firewall_bypass(
     gui_sudo: bool = False,
     runner: Runner = _default_runner,
     state_file: Path = BYPASS_STATE_FILE,
+    system_state_file: Path = SYSTEM_TUNNEL_STATE_FILE,
 ) -> list[str]:
     """Recover DNS / WARP / Tailscale / VPN state after an unexpected crash or kill -9."""
     notes: list[str] = []
     if not state_file.exists():
         return notes
 
-    try:
-        data = json.loads(state_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        data = {}
+    data = read_json_dict(state_file)
+    if _session_defers_to_system_tunnel(state_file, system_state_file):
+        if data.get("warp_connected_by_us") or data.get("tailscale_exit_set_by_us") or data.get("tailscale_started_by_us"):
+            notes.append("Kept Tailscale/WARP routing up (owned by system-wide tunnel `senza tunnel on`)")
+        for key in ("warp_connected_by_us", "tailscale_exit_set_by_us", "tailscale_started_by_us"):
+            data[key] = False
 
     if data.get("warp_connected_by_us") and data.get("warp_cli"):
         res = runner([str(data["warp_cli"]), "disconnect"])
@@ -1098,10 +1125,7 @@ def restore_firewall_bypass(
         else:
             notes.append(f"Warning: failed to restore DNS on '{dns_service}' ({res.stderr.strip()})")
 
-    try:
-        state_file.unlink()
-    except OSError:
-        pass
+    remove_file(state_file)
     return notes
 
 
@@ -1117,13 +1141,7 @@ def _resolve_senza_cli_path() -> str:
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    return read_json_dict(path)
 
 
 def _warp_is_connected(runner: Runner = _default_runner) -> bool:
@@ -1244,7 +1262,6 @@ def system_tunnel_up(
         else ("warp" if fb._warp_connected_by_us else "none")
     )
 
-    state_file.parent.mkdir(parents=True, exist_ok=True)
     merged = {
         "persistent": True,
         "target_exit_node": target,
@@ -1265,7 +1282,7 @@ def system_tunnel_up(
         "tailscale_cli": fb._tailscale_cli or prev_saved.get("tailscale_cli"),
         "vpn_started_by_us": fb._vpn_started_by_us or prev_saved.get("vpn_started_by_us"),
     }
-    state_file.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+    atomic_write_json(state_file, merged)
     return notes
 
 

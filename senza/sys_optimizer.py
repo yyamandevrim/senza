@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import atexit
-import json
+import os
+import shlex
 import signal
 import subprocess
-import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
+from .state import atomic_write_json, read_json_dict, remove_file
+
 STATE_DIR = Path.home() / ".local" / "share" / "senza"
 STATE_FILE = STATE_DIR / "runtime_state.json"
+P2P_LEASE_FILE = STATE_DIR / "p2p_watchdog.lease"
+P2P_WATCHDOG_INTERVAL_S = 2
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
@@ -59,6 +64,42 @@ def _iface_is_up(iface: str, runner: Runner) -> bool:
     return res.returncode == 0 and "<UP," in res.stdout
 
 
+def _ack_file(lease_file: Path) -> Path:
+    """Created by Senza at start; deleted by the root watchdog once rollback has finished."""
+    return lease_file.with_name(lease_file.name + ".ack")
+
+
+def build_root_p2p_watchdog(
+    ifaces: list[str],
+    saved_sysctls: dict[str, str],
+    parent_pid: int,
+    lease_file: Path,
+    interval_s: int = P2P_WATCHDOG_INTERVAL_S,
+) -> str:
+    """Shell snippet (run once as root) that detaches a tiny root watchdog.
+
+    While `parent_pid` is alive AND `lease_file` exists it re-downs awdl0/llw0 whenever macOS
+    (sharingd/bluetoothd) silently re-enables them. When the session ends (lease removed) or the
+    Senza process dies (crash, kill -9), it restores interfaces + sysctls itself and exits.
+    This needs no cached sudo ticket, so it works for both terminal sudo and the GUI Touch ID path.
+    """
+    lease_q = shlex.quote(str(lease_file))
+    ack_q = shlex.quote(str(_ack_file(lease_file)))
+    keep_down = " ; ".join(
+        f"if ifconfig {i} 2>/dev/null | grep -q UP, ; then ifconfig {i} down ; fi" for i in ifaces
+    )
+    restore_parts = [f"ifconfig {i} up" for i in ifaces]
+    restore_parts += [f"sysctl -w {k}={v}" for k, v in saved_sysctls.items()]
+    restore = " ; ".join(restore_parts) if restore_parts else "true"
+    loop = (
+        f"while kill -0 {int(parent_pid)} 2>/dev/null && [ -f {lease_q} ] ; do "
+        f"{keep_down or 'true'} ; sleep {int(interval_s)} ; done ; "
+        f"{restore} >/dev/null 2>&1 ; rm -f {lease_q} {ack_q}"
+    )
+    # Fully detach stdio so `osascript ... do shell script` returns immediately.
+    return f"nohup /bin/sh -c {shlex.quote(loop)} >/dev/null 2>&1 </dev/null &"
+
+
 class SystemOptimizer:
     """Applies macOS streaming & network optimizations and restores everything on exit/crash."""
 
@@ -70,6 +111,7 @@ class SystemOptimizer:
         runner: Runner = _default_runner,
         state_file: Path = STATE_FILE,
         enable_watchdog: bool = True,
+        lease_file: Path = P2P_LEASE_FILE,
     ) -> None:
         self.privileged = privileged
         self.gui_sudo = gui_sudo
@@ -77,6 +119,7 @@ class SystemOptimizer:
         self.runner = runner
         self.state_file = state_file
         self.enable_watchdog = enable_watchdog
+        self.lease_file = lease_file
 
         self._caffeinate_proc: subprocess.Popen[str] | None = None
         self._disabled_ifaces: list[str] = []
@@ -84,51 +127,37 @@ class SystemOptimizer:
         self._active = False
         self._prev_sigint: Any = None
         self._prev_sigterm: Any = None
-        self._watchdog_stop = threading.Event()
-        self._watchdog_thread: threading.Thread | None = None
+        self._root_watchdog = False
 
     def _write_state(self) -> None:
         if self.dry_run:
             return
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "awdl_disabled": "awdl0" in self._disabled_ifaces,
-            "disabled_ifaces": self._disabled_ifaces,
-            "saved_sysctls": self._saved_sysctls,
-        }
-        self.state_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        atomic_write_json(
+            self.state_file,
+            {
+                "awdl_disabled": "awdl0" in self._disabled_ifaces,
+                "disabled_ifaces": self._disabled_ifaces,
+                "saved_sysctls": self._saved_sysctls,
+                "root_watchdog": self._root_watchdog,
+                "lease_file": str(self.lease_file) if self._root_watchdog else None,
+            },
+        )
 
     def _clear_state(self) -> None:
         if self.dry_run:
             return
-        try:
-            if self.state_file.exists():
-                self.state_file.unlink()
-        except OSError:
-            pass
+        remove_file(self.state_file)
 
-    def _start_p2p_watchdog(self) -> None:
-        """Keep macOS background daemons (sharingd/bluetoothd) from silently re-enabling awdl0/llw0."""
-        if not self.enable_watchdog or self.dry_run or self.gui_sudo or not self._disabled_ifaces:
-            return
-        self._watchdog_stop.clear()
-
-        def _loop() -> None:
-            while not self._watchdog_stop.wait(4.0):
-                to_suppress = [i for i in self._disabled_ifaces if _iface_is_up(i, self.runner)]
-                if to_suppress:
-                    script = " ; ".join(f"ifconfig {i} down" for i in to_suppress)
-                    # Non-interactive sudo -n so watchdog never blocks waiting for a password
-                    self.runner(["sudo", "-n", "sh", "-c", script])
-
-        self._watchdog_thread = threading.Thread(target=_loop, name="psr-p2p-watchdog", daemon=True)
-        self._watchdog_thread.start()
-
-    def _stop_p2p_watchdog(self) -> None:
-        self._watchdog_stop.set()
-        if self._watchdog_thread is not None:
-            self._watchdog_thread.join(timeout=1.5)
-            self._watchdog_thread = None
+    def _wait_root_watchdog_rollback(self, timeout_s: float = 4.0) -> bool:
+        """After removing the lease, wait for the root watchdog to finish rollback (it deletes the ack file)."""
+        ack = _ack_file(self.lease_file)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if not ack.exists():
+                return True
+            time.sleep(0.2)
+        remove_file(ack)
+        return False
 
     def enter(self) -> list[str]:
         """Apply pre-launch macOS & network optimizations. Returns human-readable action notes."""
@@ -163,6 +192,12 @@ class SystemOptimizer:
 
             iface_parts = [f"ifconfig {i} down" for i in ifaces]
             script = " && ".join([*iface_parts, *sysctl_parts])
+            use_root_watchdog = self.enable_watchdog and not self.dry_run
+            if use_root_watchdog:
+                self.lease_file.parent.mkdir(parents=True, exist_ok=True)
+                self.lease_file.write_text(str(os.getpid()), encoding="utf-8")
+                _ack_file(self.lease_file).write_text(str(os.getpid()), encoding="utf-8")
+                script += " ; " + build_root_p2p_watchdog(ifaces, saved, os.getpid(), self.lease_file)
             cmd = _privileged_shell_cmd(script, self.gui_sudo)
 
             if self.dry_run:
@@ -172,13 +207,21 @@ class SystemOptimizer:
                 if res.returncode == 0:
                     self._disabled_ifaces = list(ifaces)
                     self._saved_sysctls = saved
+                    self._root_watchdog = use_root_watchdog
                     self._write_state()
                     notes.append(f"Paused {', '.join(ifaces)} (Wi-Fi off-channel jitter elimination)")
                     notes.append(
                         "Boosted kernel UDP/TCP buffers (udp.recvspace=4MB, udp.maxdgram=64KB, tcp.delayed_ack=0)"
                     )
-                    self._start_p2p_watchdog()
+                    if use_root_watchdog:
+                        notes.append(
+                            f"Root AWDL watchdog active (re-pauses {', '.join(ifaces)} every "
+                            f"{P2P_WATCHDOG_INTERVAL_S}s, self-restores on exit or crash)"
+                        )
                 else:
+                    if use_root_watchdog:
+                        remove_file(self.lease_file)
+                        remove_file(_ack_file(self.lease_file))
                     notes.append(f"Warning: privileged network boost failed ({res.stderr.strip()})")
 
         if not self.dry_run:
@@ -230,8 +273,6 @@ class SystemOptimizer:
             return notes
         self._active = False
 
-        self._stop_p2p_watchdog()
-
         if self._caffeinate_proc is not None:
             try:
                 self._caffeinate_proc.terminate()
@@ -243,6 +284,22 @@ class SystemOptimizer:
                     pass
             self._caffeinate_proc = None
             notes.append("Stopped caffeinate")
+
+        if self._root_watchdog:
+            # Root watchdog owns rollback: dropping the lease makes it restore ifaces + sysctls
+            # without a second password / Touch ID prompt.
+            remove_file(self.lease_file)
+            restored = self.dry_run or self._wait_root_watchdog_rollback()
+            if restored:
+                if self._disabled_ifaces:
+                    notes.append(f"Restored {', '.join(self._disabled_ifaces)} (AirDrop/Handoff re-enabled)")
+                if self._saved_sysctls:
+                    notes.append("Restored original macOS kernel UDP/TCP sysctl values")
+                self._disabled_ifaces = []
+                self._saved_sysctls = {}
+            else:
+                notes.append("Watchdog rollback not confirmed in 4s — falling back to direct restore")
+            self._root_watchdog = False
 
         rollback_parts: list[str] = []
         for iface in self._disabled_ifaces:
@@ -286,14 +343,19 @@ def restore_from_crash(
     sysctls_to_restore: dict[str, str] = {}
 
     if state_file.exists():
-        try:
-            data = json.loads(state_file.read_text(encoding="utf-8"))
+        data = read_json_dict(state_file)
+        if not data:
+            ifaces_to_up = ["awdl0", "llw0"]
+        else:
             ifaces_to_up = list(data.get("disabled_ifaces", []))
             if data.get("awdl_disabled") and "awdl0" not in ifaces_to_up:
                 ifaces_to_up.append("awdl0")
             sysctls_to_restore = dict(data.get("saved_sysctls", {}))
-        except (OSError, ValueError):
-            ifaces_to_up = ["awdl0", "llw0"]
+            # Stop any orphaned root watchdog first so it doesn't re-down interfaces after we restore them.
+            if data.get("lease_file"):
+                lease = Path(str(data["lease_file"]))
+                remove_file(lease)
+                remove_file(_ack_file(lease))
 
     for iface in WIFI_P2P_INTERFACES:
         if iface not in ifaces_to_up:
@@ -314,9 +376,5 @@ def restore_from_crash(
         else:
             notes.append(f"Warning: could not restore network state ({res.stderr.strip()})")
 
-    if state_file.exists():
-        try:
-            state_file.unlink()
-        except OSError:
-            pass
+    remove_file(state_file)
     return notes
