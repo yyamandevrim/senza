@@ -105,5 +105,31 @@ class TestBundleFreshness(unittest.TestCase):
             self.assertFalse(plist.exists())
 
 
+class TestOnboard(unittest.TestCase):
+    def test_summary_only_blocks_on_required(self) -> None:
+        from senza.onboard import Check, summary
+
+        res = summary([Check("a", "A", True, True), Check("b", "B", False, False, fix="x")])
+        self.assertTrue(res["ready"])
+        res = summary([Check("a", "A", False, True, fix="senza setup"), Check("b", "B", True, False)])
+        self.assertFalse(res["ready"])
+        self.assertEqual(res["missing_required"], ["a"])
+        self.assertEqual(res["checks"][0]["fix"], "senza setup")
+
+    def test_cli_json_shape(self) -> None:
+        import contextlib
+        import io
+        import json
+
+        from senza.cli import main
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(["onboard", "--json"])
+        data = json.loads(buf.getvalue())
+        self.assertIn("ready", data)
+        self.assertTrue({"clt", "bridges", "client", "bundle", "cli", "helper"} <= {c["id"] for c in data["checks"]})
+
+
 if __name__ == "__main__":
     unittest.main()

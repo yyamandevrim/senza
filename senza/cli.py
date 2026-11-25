@@ -614,6 +614,26 @@ def cmd_history(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_onboard(args: argparse.Namespace) -> int:
+    """Readiness checklist (also drives Senza.app's first-run screen)."""
+    from . import onboard
+
+    result = onboard.summary(onboard.run_checks())
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return 0
+    for c in result["checks"]:
+        mark = "ok " if c["ok"] else ("-- " if not c["required"] else "!! ")
+        line = f"  {mark} {c['title']}"
+        if c["detail"]:
+            line += f"  ({c['detail']})"
+        print(line)
+        if not c["ok"]:
+            print(f"       fix: {c['fix']}")
+    print("\nReady to play." if result["ready"] else "\nFix the items marked !! first.")
+    return 0 if result["ready"] else 1
+
+
 def cmd_restore(args: argparse.Namespace) -> int:
     notes = restore_firewall_bypass(gui_sudo=args.gui_sudo)
     notes.extend(restore_from_crash(gui_sudo=args.gui_sudo))
@@ -762,6 +782,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_tun.add_argument("--dry-run", action="store_true", help="Show planned tunnel steps without modifying state")
     p_tun.add_argument("--json", action="store_true", help="Emit JSON output (for `status`)")
     p_tun.set_defaults(func=cmd_tunnel)
+
+    p_onb = sub.add_parser("onboard", help="First-run readiness checklist with one-line fixes")
+    p_onb.add_argument("--json", action="store_true")
+    p_onb.set_defaults(func=cmd_onboard)
 
     p_net = sub.add_parser("network", help="Per-network launch profiles (recognised by router, no Location permission)")
     p_net.add_argument("network_action", choices=["show", "save", "list", "forget"])
