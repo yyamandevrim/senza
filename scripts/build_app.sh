@@ -32,6 +32,14 @@ if [[ -f "$ICON_PNG" ]] && command -v sips >/dev/null 2>&1 && command -v iconuti
   rm -rf "$ICONSET_DIR"
 fi
 
+# Dev installs (`make install-app`) keep using the live repo CLI; release builds are self-contained.
+REPO_ROOT_PLIST=""
+if [[ "${SENZA_DEV_LINK:-0}" == "1" ]]; then
+  REPO_ROOT_PLIST="  <key>SenzaRepoRoot</key>
+  <string>${ROOT_DIR}</string>
+"
+fi
+
 # 2. Write Info.plist (regular Dock + Menu Bar macOS app)
 cat > "$APP_DIR/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -58,9 +66,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
   <string>${BUILD_NUMBER}</string>
-  <key>SenzaRepoRoot</key>
-  <string>${ROOT_DIR}</string>
-  <key>LSMinimumSystemVersion</key>
+${REPO_ROOT_PLIST}  <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
@@ -82,5 +88,24 @@ swiftc \
   -o "$APP_DIR/Contents/MacOS/Senza"
 
 chmod +x "$APP_DIR/Contents/MacOS/Senza"
-codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
+
+# 4. Embed the CLI payload, laid out like the repo so the Python package's paths work unchanged:
+#    Resources/{bin/senza, senza/, build/libsenza_*.dylib, profiles/, assets/icon.png}
+RES="$APP_DIR/Contents/Resources"
+for lib in libsenza_sony.dylib libsenza_chiaki.dylib; do
+  if [[ ! -f "$ROOT_DIR/build/$lib" ]]; then
+    echo "error: build/$lib missing; run \`make build\` first" >&2
+    exit 1
+  fi
+done
+mkdir -p "$RES/bin" "$RES/build" "$RES/profiles" "$RES/assets"
+rsync -a --delete --exclude "__pycache__" --exclude "*.pyc" "$ROOT_DIR/senza/" "$RES/senza/"
+cp "$ROOT_DIR/bin/senza" "$RES/bin/senza"
+chmod +x "$RES/bin/senza" "$RES/senza/resources/senza-priv"
+cp "$ROOT_DIR/build/libsenza_sony.dylib" "$ROOT_DIR/build/libsenza_chiaki.dylib" "$RES/build/"
+cp "$ROOT_DIR"/profiles/*.json "$RES/profiles/"
+cp "$ROOT_DIR/assets/icon.png" "$RES/assets/icon.png"
+cp "$ROOT_DIR/LICENSE" "$RES/LICENSE"
+codesign --force --deep --sign - "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR"
 echo "Built native macOS GUI app bundle: $APP_DIR"

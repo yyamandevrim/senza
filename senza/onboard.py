@@ -11,7 +11,14 @@ from typing import Any
 
 from . import config as user_config
 from . import networks, privileged
-from .app_bridge import BUILD_CHIAKI_DYLIB, BUILD_SONY_DYLIB, bundle_status, find_chiaki_app, find_sony_app
+from .app_bridge import (
+    BUILD_CHIAKI_DYLIB,
+    BUILD_SONY_DYLIB,
+    bundle_status,
+    find_chiaki_app,
+    find_sony_app,
+    is_bundled_install,
+)
 from .firewall import find_tailscale_cli, find_warp_cli
 
 
@@ -36,26 +43,28 @@ def run_checks() -> list[Check]:
     sony = find_sony_app()
     chiaki = find_chiaki_app()
     checks: list[Check] = []
-
-    checks.append(
-        Check(
-            "clt",
-            "Xcode Command Line Tools",
-            _clt_installed(),
-            True,
-            "Needed to build the DualSense bridges",
-            "xcode-select --install",
-        )
-    )
     built = BUILD_SONY_DYLIB.is_file() and BUILD_CHIAKI_DYLIB.is_file()
+    bundled = is_bundled_install()
+
+    if not bundled or not built:  # the release app ships prebuilt bridges; CLT only matters for building
+        checks.append(
+            Check(
+                "clt",
+                "Xcode Command Line Tools",
+                _clt_installed(),
+                True,
+                "Needed to build the DualSense bridges",
+                "xcode-select --install",
+            )
+        )
     checks.append(
         Check(
             "bridges",
-            "DualSense bridges built",
+            "DualSense bridges ready",
             built,
             True,
-            "libsenza_sony.dylib and libsenza_chiaki.dylib",
-            "senza setup",
+            "Included in Senza.app" if bundled else "libsenza_sony.dylib and libsenza_chiaki.dylib",
+            "Reinstall Senza.app" if bundled else "senza setup",
         )
     )
     client_detail = ", ".join(x for x in (sony and "PS Remote Play", chiaki and "chiaki-ng") if x) or "none found"
@@ -85,11 +94,11 @@ def run_checks() -> list[Check]:
     checks.append(
         Check(
             "cli",
-            "senza command installed",
+            "senza command in Terminal",
             on_path,
-            True,
-            "~/.local/bin/senza",
-            "make install  (then add ~/.local/bin to PATH)",
+            False,
+            "For Raycast, scripts and the tunnel watchdog",
+            "senza install-cli",
         )
     )
 

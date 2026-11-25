@@ -236,10 +236,10 @@ def cmd_start(args: argparse.Namespace) -> int:
     dylib: Path | None = None
 
     if use_kbm:
-        from .profiles import resolve_profile_path
+        from .profiles import writable_profile_path
 
-        profile_json_path = resolve_profile_path(args.profile)
-        profile = load_profile(args.profile)
+        profile_json_path = writable_profile_path(args.profile)
+        profile = load_profile(str(profile_json_path))
         runtime_cfg = export_runtime_config(profile, STATE_DIR / "runtime_profile.cfg")
 
     if client == "chiaki":
@@ -669,6 +669,28 @@ def cmd_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_cli(args: argparse.Namespace) -> int:
+    """Put `senza` on PATH (~/.local/bin/senza -> this install's launcher). Used by Senza.app's setup."""
+    import os
+
+    launcher = Path(__file__).resolve().parent.parent / "bin" / "senza"
+    link = Path.home() / ".local" / "bin" / "senza"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink() or link.exists():
+        if link.resolve() == launcher.resolve():
+            print(f"  [cli] {link} already points to {launcher}")
+            return 0
+        if not args.force:
+            print(f"  [cli] {link} exists and points elsewhere ({link.resolve()}); use --force to replace it")
+            return 1
+        link.unlink()
+    link.symlink_to(launcher)
+    print(f"  [cli] {link} -> {launcher}")
+    if str(link.parent) not in os.environ.get("PATH", "").split(os.pathsep):
+        print("  [cli] Add it to PATH: echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.zshrc")
+    return 0
+
+
 def cmd_restore(args: argparse.Namespace) -> int:
     notes = restore_firewall_bypass(gui_sudo=args.gui_sudo)
     notes.extend(restore_from_crash(gui_sudo=args.gui_sudo))
@@ -828,6 +850,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_prof.add_argument("--force", action="store_true", help="Replace an existing user profile on import")
     p_prof.add_argument("--json", action="store_true")
     p_prof.set_defaults(func=cmd_profile)
+
+    p_icli = sub.add_parser("install-cli", help="Link ~/.local/bin/senza to this Senza install")
+    p_icli.add_argument("--force", action="store_true", help="Replace an existing ~/.local/bin/senza")
+    p_icli.set_defaults(func=cmd_install_cli)
 
     p_onb = sub.add_parser("onboard", help="First-run readiness checklist with one-line fixes")
     p_onb.add_argument("--json", action="store_true")

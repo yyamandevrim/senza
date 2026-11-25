@@ -133,7 +133,7 @@ def recent_sessions(limit: int = 10, path: Path | None = None) -> list[dict[str,
         "latency_p50_ms",
         "latency_p95_ms",
     )
-    return [dict(zip(keys, r, strict=True)) for r in rows]
+    return [dict(zip(keys, r)) for r in rows]  # noqa: B905 - equal lengths; zip(strict=) needs 3.10
 
 
 def _p(values: list[float], q: float) -> float | None:

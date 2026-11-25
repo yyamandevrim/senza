@@ -20,7 +20,7 @@ COMMON_M := macos_capture.m hud.m net_telemetry.m phys_controller.m window_watch
 COMMON_OBJS := $(addprefix $(OBJ_DIR)/,$(COMMON_C:.c=.o) $(COMMON_M:.m=.o))
 NATIVE_HEADERS := $(wildcard $(NATIVE_DIR)/*.h)
 
-.PHONY: all build app install install-app uninstall test test-c test-py test-sanitize hud-preview lint clean
+.PHONY: all build app dist install install-app uninstall test test-c test-py test-sanitize hud-preview lint clean
 
 all: build
 
@@ -54,7 +54,12 @@ install: build app
 	@echo "App launcher : $(CURDIR)/$(APP_BUNDLE)"
 	@echo 'Next step    : senza setup  (or "make install-app" to copy Senza.app to /Applications)'
 
-install-app: app
+# Self-contained release artifacts in build/dist (zip + dmg + SHA256SUMS)
+dist: build app
+	bash scripts/package_release.sh
+
+install-app: build
+	SENZA_DEV_LINK=1 bash scripts/build_app.sh "$(APP_BUNDLE)"
 	rm -rf "/Applications/Senza.app"
 	cp -R "$(APP_BUNDLE)" "/Applications/Senza.app"
 	@echo "Installed GUI app: /Applications/Senza.app"

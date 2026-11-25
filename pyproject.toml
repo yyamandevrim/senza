@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Zero-permission Virtual DualSense bridge, MacBook Trackpad + Keyboard GTA 6 Smart Pack, and WAN stream optimizer for PS5 Remote Play on Apple Silicon macOS."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 authors = [{ name = "Yaman Devrim" }]
 keywords = ["macos", "apple-silicon", "ps5", "remote-play", "dualsense", "chiaki", "gta6", "raycast"]
 classifiers = [
@@ -40,7 +40,7 @@ senza = ["resources/*"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "UP", "I", "SIM"]
@@ -53,7 +53,7 @@ ignore = [
 "tests/*" = ["E402"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.9"
 check_untyped_defs = true
 ignore_missing_imports = true
 warn_unused_ignores = true

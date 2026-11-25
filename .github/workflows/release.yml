@@ -1,0 +1,64 @@
+name: Release
+
+# Push a tag like v1.4.0 (matching senza/__init__.py) to build, test and publish Senza.app.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and upload, e.g. v1.4.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Check tag matches the package version
+        id: ver
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' senza/__init__.py)"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::tag $TAG does not match senza/__init__.py version $VERSION"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build bridges and run tests
+        run: |
+          make -j4 build
+          make test
+
+      - name: Build self-contained Senza.app and package it
+        run: SWIFT_FLAGS=-warnings-as-errors make dist
+
+      - name: Smoke-test the packaged CLI on system Python 3.9
+        run: |
+          CLI="build/Senza.app/Contents/Resources/bin/senza"
+          export HOME="$RUNNER_TEMP/home" SENZA_PYTHON=/usr/bin/python3 SENZA_NO_NOTIFY=1
+          mkdir -p "$HOME"
+          "$CLI" --version
+          "$CLI" onboard --json > /dev/null
+          "$CLI" profile list
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          NOTES="docs/releases/$TAG.md"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" build/dist/* --clobber
+          elif [ -f "$NOTES" ]; then
+            gh release create "$TAG" build/dist/* --title "Senza $TAG" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" build/dist/* --title "Senza $TAG" --generate-notes
+          fi

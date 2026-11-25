@@ -44,6 +44,18 @@ jobs:
           ./bin/senza start --dry-run
           ./bin/senza config path
 
+      - name: CLI runs on the system Python 3.9 (what a fresh Mac has)
+        run: |
+          /usr/bin/python3 --version
+          /usr/bin/python3 -m compileall -q senza
+          export SENZA_PYTHON=/usr/bin/python3 SENZA_NO_NOTIFY=1
+          ./bin/senza --version
+          ./bin/senza start --dry-run
+          ./bin/senza onboard --json > /dev/null
+
+      - name: Package release artifacts (zip + dmg)
+        run: make dist
+
       - name: Setup Node.js for Raycast extension
         uses: actions/setup-node@v4
         with:

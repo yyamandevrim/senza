@@ -160,9 +160,32 @@ final class ProfileStudioModel: ObservableObject {
 
     private var profileDescription: String = "GTA 6 Official Default Control Scheme — MacBook Trackpad + Keyboard"
 
+    /// ~/.config/senza/profiles/gta6.json: user copy that shadows the built-in profile (same rule as the CLI).
+    private var userProfileURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/senza/profiles/gta6.json")
+    }
+
+    private var builtinProfileURL: URL? {
+        SenzaCLI.resolve()?.workingDir.appendingPathComponent("profiles/gta6.json")
+    }
+
+    /// Read the user copy when it exists, else the built-in profile (repo or Senza.app).
     func profileURL() -> URL? {
-        guard let cli = SenzaCLI.resolve() else { return nil }
-        return cli.workingDir.appendingPathComponent("profiles/gta6.json")
+        FileManager.default.fileExists(atPath: userProfileURL.path) ? userProfileURL : builtinProfileURL
+    }
+
+    /// Never write into the signed app bundle: inside Senza.app (or when the built-in file is read-only)
+    /// saves go to the user copy, which the CLI and the live bridge pick up first.
+    func saveURL() -> URL? {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: userProfileURL.path) { return userProfileURL }
+        guard let builtin = builtinProfileURL else { return userProfileURL }
+        if builtin.path.contains(".app/Contents/") || !fm.isWritableFile(atPath: builtin.path) {
+            try? fm.createDirectory(at: userProfileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            return userProfileURL
+        }
+        return builtin
     }
 
     func load() {
@@ -172,7 +195,7 @@ final class ProfileStudioModel: ObservableObject {
               let data = try? Data(contentsOf: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             resetDefaults()
-            errorText = "Could not open profiles/gta6.json — loaded built-in GTA 6 defaults."
+            errorText = "Could not open the gta6 profile. Loaded the built-in defaults"
             return
         }
 
@@ -308,7 +331,7 @@ final class ProfileStudioModel: ObservableObject {
     }
 
     func saveAndHotReload() {
-        guard let url = profileURL() else {
+        guard let url = saveURL() else {
             errorText = "Senza CLI / profiles directory not found."
             return
         }
@@ -656,7 +679,7 @@ struct ProfileStudioView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Sensitivity and keys")
                         .font(Theme.title())
-                    Text("Edits profiles/gta6.json and applies to a running session instantly")
+                    Text("Edits the gta6 profile and applies to a running session instantly")
                         .font(Theme.small())
                         .foregroundStyle(.white.opacity(0.55))
                 }

@@ -64,11 +64,28 @@ Senza.app (native SwiftUI launcher + Menu Bar sandwich)  ──or──  senza C
 ### Requirements
 
 - **macOS 13+** on **Apple Silicon** (M1 / M2 / M3 / M4)
-- **Xcode Command Line Tools** (`xcode-select --install`)
-- **Python 3.10+** (zero third-party Python dependencies)
+- **Python 3.9+**: the one that ships with the Xcode Command Line Tools (`xcode-select --install`) is enough,
+  Homebrew Python works too. No third-party packages.
 - [Sony PS Remote Play](https://remoteplay.dl.playstation.net/remoteplay/) (`RemotePlay.app`) and/or [chiaki-ng](https://github.com/streetpea/chiaki-ng) (`chiaki-ng.app`) in `/Applications`
 
-### Install & Setup
+### Download (recommended)
+
+1. Download `Senza-<version>-macOS-arm64.dmg` from the [latest release](https://github.com/yyamandevrim/senza/releases/latest)
+   and drag **Senza** to Applications. The app is self-contained: prebuilt DualSense bridges, the `senza` CLI and the
+   GTA 6 profile are inside it.
+2. Senza is ad-hoc signed, not notarized (there is no paid Apple Developer ID behind it), so macOS blocks the first
+   launch. Open it once, then go to **System Settings › Privacy & Security** and click **Open Anyway**, or run:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Senza.app
+   ```
+3. The setup checklist opens on first launch. **Set up** next to "senza command in Terminal" links `~/.local/bin/senza`
+   for Raycast, scripts and the tunnel watchdog.
+
+Profile edits (Studio, live `-`/`=` sensitivity) are saved to `~/.config/senza/profiles/`, never inside the app, so
+updating Senza keeps your settings. Verify a download with `shasum -a 256 -c SHA256SUMS.txt`.
+
+### Build from source
 
 ```bash
 git clone https://github.com/yyamandevrim/senza.git
@@ -221,8 +238,12 @@ make build        # Compile arm64 libsenza_sony.dylib & libsenza_chiaki.dylib
 make app          # Compile native SwiftUI build/Senza.app with .icns icon
 make install-app  # Install Senza.app into /Applications
 make test         # Run C mapper_core tests + Python unit tests
+make dist         # Self-contained Senza.app -> build/dist/*.zip, *.dmg, SHA256SUMS.txt
 make clean        # Clean build artifacts
 ```
+
+Releasing: bump `__version__` in `senza/__init__.py`, add `docs/releases/vX.Y.Z.md`, then push a `vX.Y.Z` tag. The
+Release workflow builds, tests, smoke-tests the packaged CLI on Python 3.9 and attaches the zip, dmg and checksums.
 
 ---
 

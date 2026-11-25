@@ -68,13 +68,45 @@ def find_app_binary(app_bundle: Path, client: str = "chiaki") -> Path:
     raise FileNotFoundError(f"Could not find {client} executable inside {macos_dir}")
 
 
+STAGED_LIB_DIR = STATE_DIR / "lib"
+
+
+def is_bundled_install() -> bool:
+    """True when running from Senza.app/Contents/Resources (prebuilt dylibs, no Makefile)."""
+    return not (REPO_ROOT / "Makefile").is_file()
+
+
+def _stage_prebuilt(target: Path) -> Path:
+    """Copy a prebuilt dylib out of the (possibly quarantined) app bundle and clear its quarantine flag.
+
+    A release download carries com.apple.quarantine; dyld refuses to inject a quarantined, ad-hoc signed
+    library. A user-owned copy without the flag in ~/.local/share/senza/lib loads normally.
+    """
+    STAGED_LIB_DIR.mkdir(parents=True, exist_ok=True)
+    staged = STAGED_LIB_DIR / target.name
+    src_stat = target.stat()
+    if not staged.is_file() or staged.stat().st_size != src_stat.st_size or staged.stat().st_mtime < src_stat.st_mtime:
+        tmp = staged.with_suffix(".tmp")
+        shutil.copy2(target, tmp)
+        os.replace(tmp, staged)
+    subprocess.run(["xattr", "-d", "com.apple.quarantine", str(staged)], capture_output=True, check=False)
+    return staged
+
+
 def ensure_dylib_built(client: str = "chiaki", force: bool = False) -> Path:
-    """Incremental `make build` every time (a no-op when up to date) so edited sources never ship stale."""
+    """Incremental `make build` every time (a no-op when up to date) so edited sources never ship stale.
+
+    Inside Senza.app there is no Makefile: the prebuilt dylibs from the release are staged instead.
+    """
     target = BUILD_SONY_DYLIB if client == "sony" else BUILD_CHIAKI_DYLIB
+    if is_bundled_install():
+        if not target.is_file():
+            raise RuntimeError(f"{target} is missing from this Senza build; reinstall Senza.app.")
+        return _stage_prebuilt(target)
     if force:
         for stale in (BUILD_SONY_DYLIB, BUILD_CHIAKI_DYLIB):
             stale.unlink(missing_ok=True)
-    if shutil.which("make") is None or not (REPO_ROOT / "Makefile").is_file():
+    if shutil.which("make") is None:
         if target.is_file():
             return target
         raise RuntimeError(f"{target} missing and `make` unavailable (install Xcode Command Line Tools).")

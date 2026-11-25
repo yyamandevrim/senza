@@ -14,6 +14,10 @@ struct SenzaCLI {
         if let repoRoot = Bundle.main.infoDictionary?["SenzaRepoRoot"] as? String, !repoRoot.isEmpty {
             candidates.append((repoRoot as NSString).appendingPathComponent("bin/senza"))
         }
+        // Release builds carry the CLI, dylibs and profiles in Contents/Resources.
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("bin/senza").path {
+            candidates.append(bundled)
+        }
         candidates.append("\(home)/.local/bin/senza")
         candidates.append("/opt/homebrew/bin/senza")
         candidates.append("/usr/local/bin/senza")

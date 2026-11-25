@@ -158,7 +158,7 @@ def select_exit_node(
 
     with ThreadPoolExecutor(max_workers=min(4, len(usable))) as pool:
         rtts = list(pool.map(lambda n: _ping_ms(ts_cli, n, runner), usable))
-    ranked = list(zip(usable, rtts, strict=True))
+    ranked = list(zip(usable, rtts))  # noqa: B905 - pool.map keeps length; zip(strict=) needs 3.10
     reachable = [(n, r) for n, r in ranked if r is not None]
     if not reachable:
         return usable[0], ranked

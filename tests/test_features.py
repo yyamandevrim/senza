@@ -208,5 +208,50 @@ class TestProfileManagement(unittest.TestCase):
         self.assertFalse((Path(self._tmp.name) / "cfg" / "profiles" / "x.json").exists())
 
 
+class TestBundledInstall(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._env = mock.patch.dict(os.environ, {"SENZA_CONFIG": str(self.root / "cfg" / "config.json")})
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def test_builtin_profile_inside_app_is_copied_before_writes(self) -> None:
+        from senza import profiles as prof
+
+        bundled = self.root / "Senza.app" / "Contents" / "Resources" / "profiles"
+        bundled.mkdir(parents=True)
+        (bundled / "gta6.json").write_text((prof.PROFILES_DIR / "gta6.json").read_text())
+        with mock.patch.object(prof, "PROFILES_DIR", bundled):
+            path = prof.writable_profile_path("gta6")
+            self.assertEqual(path, self.root / "cfg" / "profiles" / "gta6.json")
+            self.assertTrue(path.is_file())
+            self.assertEqual(prof.resolve_profile_path("gta6"), path)  # user copy now wins
+
+    def test_repo_profile_stays_in_place(self) -> None:
+        from senza import profiles as prof
+
+        self.assertEqual(prof.writable_profile_path("gta6"), prof.PROFILES_DIR / "gta6.json")
+
+    def test_prebuilt_dylib_is_staged_without_quarantine(self) -> None:
+        from senza import app_bridge
+
+        res = self.root / "Senza.app" / "Contents" / "Resources"
+        (res / "build").mkdir(parents=True)
+        dylib = res / "build" / "libsenza_sony.dylib"
+        dylib.write_bytes(b"\xcf\xfa\xed\xfe fake")
+        subprocess.run(["xattr", "-w", "com.apple.quarantine", "0081;0;Safari;", str(dylib)], check=True)
+        with mock.patch.multiple(app_bridge, REPO_ROOT=res, BUILD_SONY_DYLIB=dylib, STAGED_LIB_DIR=self.root / "lib"):
+            self.assertTrue(app_bridge.is_bundled_install())
+            staged = app_bridge.ensure_dylib_built(client="sony")
+        self.assertEqual(staged, self.root / "lib" / "libsenza_sony.dylib")
+        self.assertEqual(staged.read_bytes(), dylib.read_bytes())
+        attrs = subprocess.run(["xattr", str(staged)], capture_output=True, text=True).stdout
+        self.assertNotIn("com.apple.quarantine", attrs)
+
+
 if __name__ == "__main__":
     unittest.main()

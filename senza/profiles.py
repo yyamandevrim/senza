@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,22 @@ def resolve_profile_path(profile_name_or_path: str) -> Path:
     raise FileNotFoundError(
         f"Profile not found: {profile_name_or_path} (looked in {user_profiles_dir()} and {PROFILES_DIR})"
     )
+
+
+def writable_profile_path(profile_name_or_path: str) -> Path:
+    """Path the live sensitivity save / Studio may write to.
+
+    Built-in profiles inside Senza.app (or any read-only location) are copied to the user profile
+    directory first, so writes never touch the signed app bundle.
+    """
+    path = resolve_profile_path(profile_name_or_path)
+    builtin = path.parent == PROFILES_DIR
+    if builtin and (".app/Contents/" in str(path) or not os.access(path, os.W_OK)):
+        dest = user_profiles_dir() / path.name
+        if not dest.is_file():
+            atomic_write_text(dest, path.read_text(encoding="utf-8"))
+        return dest
+    return path
 
 
 def list_profiles() -> list[dict[str, Any]]:
