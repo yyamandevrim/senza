@@ -1,0 +1,143 @@
+#!/bin/sh
+# senza-priv — tiny root helper for Senza (installed root:wheel 0755 at /usr/local/libexec/senza-priv).
+#
+# Invoked only as `sudo -n /usr/local/libexec/senza-priv <verb> ...` via a single sudoers rule for the
+# installing user. Every argument is validated against a fixed allow-list; nothing is passed to a shell.
+#
+# Verbs:
+#   version
+#   session-boost <parent_pid> <iface>...   pause Wi-Fi P2P ifaces, apply UDP/TCP sysctl boosts and start a
+#                                           detached watchdog that restores everything when the lease file
+#                                           is removed or <parent_pid> exits
+#   restore [<iface>...] [-- <key>=<value>...]
+#   p2p-down <iface>... | p2p-up <iface>...
+#   dns-set <network-service> <server>...|empty
+set -u
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
+VERSION=1
+BOOST_KEYS="net.inet.udp.recvspace net.inet.udp.maxdgram net.inet.tcp.delayed_ack"
+
+die() { echo "senza-priv: $*" >&2; exit 64; }
+
+boost_value() {
+  case "$1" in
+    net.inet.udp.recvspace) echo 4194304 ;;
+    net.inet.udp.maxdgram) echo 65535 ;;
+    net.inet.tcp.delayed_ack) echo 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_iface() {
+  case "$1" in
+    awdl0|llw0) ;;
+    *) die "interface not allowed: $1" ;;
+  esac
+}
+
+check_sysctl_pair() {
+  key=${1%%=*}
+  val=${1#*=}
+  boost_value "$key" >/dev/null || die "sysctl key not allowed: $key"
+  case "$val" in
+    ''|*[!0-9]*) die "sysctl value must be an integer: $1" ;;
+  esac
+}
+
+user_home() {
+  [ -n "${SUDO_USER:-}" ] || die "must be run through sudo"
+  case "$SUDO_USER" in *[!A-Za-z0-9._-]*) die "bad SUDO_USER" ;; esac
+  home=$(dscl . -read "/Users/$SUDO_USER" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p')
+  [ -n "$home" ] && [ -d "$home" ] || die "cannot resolve home for $SUDO_USER"
+  echo "$home"
+}
+
+iface_is_up() { ifconfig "$1" 2>/dev/null | grep -q 'UP,'; }
+
+cmd_session_boost() {
+  [ $# -ge 2 ] || die "usage: session-boost <parent_pid> <iface>..."
+  pid=$1; shift
+  case "$pid" in ''|*[!0-9]*) die "bad pid" ;; esac
+  for i in "$@"; do check_iface "$i"; done
+
+  state_dir="$(user_home)/.local/share/senza"
+  lease="$state_dir/p2p_watchdog.lease"
+  ack="$lease.ack"
+  [ -f "$lease" ] || die "lease file missing: $lease"
+
+  restore_sysctls=""
+  for k in $BOOST_KEYS; do
+    orig=$(sysctl -n "$k" 2>/dev/null) || continue
+    case "$orig" in ''|*[!0-9]*) continue ;; esac
+    restore_sysctls="$restore_sysctls $k=$orig"
+  done
+
+  for i in "$@"; do ifconfig "$i" down 2>/dev/null; done
+  for k in $BOOST_KEYS; do sysctl -w "$k=$(boost_value "$k")" >/dev/null 2>&1; done
+
+  (
+    trap '' HUP
+    while kill -0 "$pid" 2>/dev/null && [ -f "$lease" ]; do
+      for i in "$@"; do
+        if iface_is_up "$i"; then ifconfig "$i" down 2>/dev/null; fi
+      done
+      sleep 2
+    done
+    for i in "$@"; do ifconfig "$i" up 2>/dev/null; done
+    for kv in $restore_sysctls; do sysctl -w "$kv" >/dev/null 2>&1; done
+    rm -f "$lease" "$ack"
+  ) </dev/null >/dev/null 2>&1 &
+  echo "ok session-boost pid=$pid ifaces=$* restore=$restore_sysctls"
+}
+
+cmd_restore() {
+  ifaces=""
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do check_iface "$1"; ifaces="$ifaces $1"; shift; done
+  [ $# -gt 0 ] && shift
+  for kv in "$@"; do check_sysctl_pair "$kv"; done
+  for i in $ifaces; do ifconfig "$i" up 2>/dev/null; done
+  for kv in "$@"; do sysctl -w "$kv" >/dev/null 2>&1 || die "sysctl failed: $kv"; done
+  echo "ok restore"
+}
+
+cmd_p2p() {
+  action=$1; shift
+  [ $# -ge 1 ] || die "usage: p2p-$action <iface>..."
+  for i in "$@"; do check_iface "$i"; done
+  for i in "$@"; do ifconfig "$i" "$action" 2>/dev/null; done
+  echo "ok p2p-$action"
+}
+
+check_dns_server() {
+  case "$1" in
+    empty) ;;
+    *[!0-9A-Fa-f.:]*|'') die "bad DNS server: $1" ;;
+  esac
+}
+
+cmd_dns_set() {
+  [ $# -ge 2 ] || die "usage: dns-set <network-service> <server>...|empty"
+  service=$1; shift
+  networksetup -listallnetworkservices 2>/dev/null | sed '1d; s/^\*//' | grep -Fxq -- "$service" \
+    || die "unknown network service: $service"
+  for s in "$@"; do check_dns_server "$s"; done
+  networksetup -setdnsservers "$service" "$@" || die "networksetup failed"
+  dscacheutil -flushcache
+  killall -HUP mDNSResponder 2>/dev/null || true
+  echo "ok dns-set"
+}
+
+[ "$(id -u)" -eq 0 ] || die "must run as root"
+verb=${1:-}
+[ $# -gt 0 ] && shift
+case "$verb" in
+  version) echo "senza-priv $VERSION" ;;
+  session-boost) cmd_session_boost "$@" ;;
+  restore) cmd_restore "$@" ;;
+  p2p-down) cmd_p2p down "$@" ;;
+  p2p-up) cmd_p2p up "$@" ;;
+  dns-set) cmd_dns_set "$@" ;;
+  *) die "unknown verb: ${verb:-<none>}" ;;
+esac

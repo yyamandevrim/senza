@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from . import privileged
 from .config import configured_exit_node
 from .state import atomic_write_json, read_json_dict, remove_file
 
@@ -47,15 +48,19 @@ def _default_runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-def _privileged_shell_cmd(script: str, gui_sudo: bool) -> list[str]:
-    if gui_sudo:
-        escaped = script.replace("\\", "\\\\").replace('"', '\\"')
-        return [
-            "osascript",
-            "-e",
-            f'do shell script "{escaped}" with administrator privileges',
-        ]
-    return ["sudo", "sh", "-c", script]
+_privileged_shell_cmd = privileged.shell_cmd
+
+
+def _dns_cmd(service: str, servers: list[str], gui_sudo: bool, runner: Runner) -> list[str]:
+    """Set DNS servers (["empty"] clears) + flush caches; passwordless via senza-priv when installed."""
+    if privileged.helper_ready(runner):
+        return privileged.helper_cmd("dns-set", service, *servers)
+    script = (
+        f"networksetup -setdnsservers {shlex.quote(service)} {' '.join(shlex.quote(x) for x in servers)} && "
+        f"dscacheutil -flushcache && "
+        f"(killall -HUP mDNSResponder 2>/dev/null || true)"
+    )
+    return _privileged_shell_cmd(script, gui_sudo)
 
 
 def find_warp_cli() -> str | None:
@@ -543,14 +548,7 @@ class FirewallBypass:
             notes.append(f"Clean DNS ({', '.join(CLEAN_DNS_SERVERS)}) already active on '{service}'")
             return notes
 
-        dns_args = " ".join(CLEAN_DNS_SERVERS)
-        svc_q = shlex.quote(service)
-        script = (
-            f"networksetup -setdnsservers {svc_q} {dns_args} && "
-            f"dscacheutil -flushcache && "
-            f"(killall -HUP mDNSResponder 2>/dev/null || true)"
-        )
-        cmd = _privileged_shell_cmd(script, self.gui_sudo)
+        cmd = _dns_cmd(service, list(CLEAN_DNS_SERVERS), self.gui_sudo, self.runner)
         if self.dry_run:
             notes.append(f"[dry-run] {' '.join(cmd)}")
             return notes
@@ -1061,14 +1059,9 @@ class FirewallBypass:
             self._vpn_started_by_us = None
 
         if self._dns_service is not None:
-            svc_q = shlex.quote(self._dns_service)
-            dns_restore = " ".join(self._prev_dns) if self._prev_dns else "empty"
-            script = (
-                f"networksetup -setdnsservers {svc_q} {dns_restore} && "
-                f"dscacheutil -flushcache && "
-                f"(killall -HUP mDNSResponder 2>/dev/null || true)"
-            )
-            res = self.runner(_privileged_shell_cmd(script, self.gui_sudo))
+            servers = list(self._prev_dns) if self._prev_dns else ["empty"]
+            dns_restore = " ".join(servers)
+            res = self.runner(_dns_cmd(self._dns_service, servers, self.gui_sudo, self.runner))
             if res.returncode == 0:
                 notes.append(f"Restored original DNS ({dns_restore}) on '{self._dns_service}'")
             else:
@@ -1140,15 +1133,10 @@ def restore_firewall_bypass(
 
     dns_service = data.get("dns_service")
     if dns_service:
-        prev_dns = data.get("prev_dns") or []
-        dns_restore = " ".join(str(x) for x in prev_dns) if prev_dns else "empty"
-        svc_q = shlex.quote(str(dns_service))
-        script = (
-            f"networksetup -setdnsservers {svc_q} {dns_restore} && "
-            f"dscacheutil -flushcache && "
-            f"(killall -HUP mDNSResponder 2>/dev/null || true)"
-        )
-        res = runner(_privileged_shell_cmd(script, gui_sudo))
+        prev_dns = [str(x) for x in (data.get("prev_dns") or [])]
+        servers = prev_dns or ["empty"]
+        dns_restore = " ".join(servers)
+        res = runner(_dns_cmd(str(dns_service), servers, gui_sudo, runner))
         if res.returncode == 0:
             notes.append(f"Restored original DNS ({dns_restore}) on '{dns_service}'")
         else:

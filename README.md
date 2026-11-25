@@ -118,6 +118,21 @@ senza tunnel install-service             # 45 s auto-heal LaunchAgent (re-reads 
 
 Resolution order: `--exit-node` flag › `$SENZA_EXIT_NODE` › config file › first exit-node peer in your tailnet.
 
+### Passwordless root helper (optional)
+
+The AWDL fix, UDP sysctl boost and Clean DNS need root. If you don't install the helper, each session asks for
+Touch ID or your password once. If you do install it, you're asked once at install time and never again:
+
+```bash
+senza helper install --gui-sudo   # installs /usr/local/libexec/senza-priv + /etc/sudoers.d/senza
+senza helper status
+senza helper uninstall
+```
+
+The helper is a short root-owned shell script (`senza/resources/senza-priv`) that accepts a fixed list of verbs.
+Interfaces are limited to `awdl0`/`llw0`, sysctl keys are limited to Senza's three tunables, and DNS servers
+must be IP addresses. The sudoers rule only covers your user and only that one file.
+
 ---
 
 ## Raycast Extension

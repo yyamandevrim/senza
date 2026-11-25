@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from . import privileged
 from .state import atomic_write_json, read_json_dict, remove_file
 
 STATE_DIR = Path.home() / ".local" / "share" / "senza"
@@ -35,15 +36,7 @@ def _default_runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-def _privileged_shell_cmd(script: str, gui_sudo: bool) -> list[str]:
-    if gui_sudo:
-        escaped = script.replace("\\", "\\\\").replace('"', '\\"')
-        return [
-            "osascript",
-            "-e",
-            f'do shell script "{escaped}" with administrator privileges',
-        ]
-    return ["sudo", "sh", "-c", script]
+_privileged_shell_cmd = privileged.shell_cmd
 
 
 def _read_sysctl(key: str, runner: Runner) -> str | None:
@@ -112,6 +105,7 @@ class SystemOptimizer:
         state_file: Path = STATE_FILE,
         enable_watchdog: bool = True,
         lease_file: Path = P2P_LEASE_FILE,
+        use_helper: bool | None = None,
     ) -> None:
         self.privileged = privileged
         self.gui_sudo = gui_sudo
@@ -120,6 +114,7 @@ class SystemOptimizer:
         self.state_file = state_file
         self.enable_watchdog = enable_watchdog
         self.lease_file = lease_file
+        self._use_helper_opt = use_helper
 
         self._caffeinate_proc: subprocess.Popen[str] | None = None
         self._disabled_ifaces: list[str] = []
@@ -147,6 +142,12 @@ class SystemOptimizer:
         if self.dry_run:
             return
         remove_file(self.state_file)
+
+    def _helper(self) -> bool:
+        """Passwordless helper only works with its fixed lease path under ~/.local/share/senza."""
+        if self._use_helper_opt is not None:
+            return self._use_helper_opt
+        return self.lease_file == P2P_LEASE_FILE and privileged.helper_ready(self.runner)
 
     def _wait_root_watchdog_rollback(self, timeout_s: float = 4.0) -> bool:
         """After removing the lease, wait for the root watchdog to finish rollback (it deletes the ack file)."""
@@ -192,13 +193,18 @@ class SystemOptimizer:
 
             iface_parts = [f"ifconfig {i} down" for i in ifaces]
             script = " && ".join([*iface_parts, *sysctl_parts])
-            use_root_watchdog = self.enable_watchdog and not self.dry_run
+            use_helper = self._helper()
+            use_root_watchdog = (self.enable_watchdog or use_helper) and not self.dry_run
             if use_root_watchdog:
                 self.lease_file.parent.mkdir(parents=True, exist_ok=True)
                 self.lease_file.write_text(str(os.getpid()), encoding="utf-8")
                 _ack_file(self.lease_file).write_text(str(os.getpid()), encoding="utf-8")
-                script += " ; " + build_root_p2p_watchdog(ifaces, saved, os.getpid(), self.lease_file)
-            cmd = _privileged_shell_cmd(script, self.gui_sudo)
+            if use_helper:
+                cmd = privileged.helper_cmd("session-boost", str(os.getpid()), *ifaces)
+            else:
+                if use_root_watchdog:
+                    script += " ; " + build_root_p2p_watchdog(ifaces, saved, os.getpid(), self.lease_file)
+                cmd = _privileged_shell_cmd(script, self.gui_sudo)
 
             if self.dry_run:
                 notes.append(f"[dry-run] {' '.join(cmd)}")
@@ -309,7 +315,11 @@ class SystemOptimizer:
 
         if rollback_parts:
             script = " ; ".join(rollback_parts)
-            cmd = _privileged_shell_cmd(script, self.gui_sudo)
+            if self._helper():
+                kv = [f"{k}={v}" for k, v in self._saved_sysctls.items()]
+                cmd = privileged.helper_cmd("restore", *self._disabled_ifaces, "--", *kv)
+            else:
+                cmd = _privileged_shell_cmd(script, self.gui_sudo)
             res = self.runner(cmd)
             if res.returncode == 0:
                 if self._disabled_ifaces:
@@ -367,7 +377,12 @@ def restore_from_crash(
     parts.extend(f"sysctl -w {k}={v}" for k, v in sysctls_to_restore.items())
 
     if parts:
-        res = runner(_privileged_shell_cmd(" ; ".join(parts), gui_sudo))
+        if privileged.helper_ready(runner):
+            kv = [f"{k}={v}" for k, v in sysctls_to_restore.items()]
+            cmd = privileged.helper_cmd("restore", *[i for i in ifaces_to_up if i in WIFI_P2P_INTERFACES], "--", *kv)
+        else:
+            cmd = _privileged_shell_cmd(" ; ".join(parts), gui_sudo)
+        res = runner(cmd)
         if res.returncode == 0:
             if ifaces_to_up:
                 notes.append(f"Restored {', '.join(ifaces_to_up)} to UP")

@@ -21,6 +21,7 @@ from .app_bridge import (
     resolve_launched_pid,
 )
 from . import config as user_config
+from . import privileged
 from .firewall_bypass import (
     FirewallBypass,
     install_tunnel_launch_agent,
@@ -88,6 +89,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "sony_bundle_ready": PATCHED_SONY_APP.exists(),
             "chiaki_app": str(chiaki) if chiaki else None,
             "patched_bundle_ready": PATCHED_APP.exists(),
+            "helper": privileged.helper_status(),
         }
         print(json.dumps(payload, indent=2))
         return 0
@@ -124,6 +126,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"  Sony RemotePlay   : {sony or 'NOT FOUND'} ({'ready' if PATCHED_SONY_APP.exists() else 'run `senza setup`'})")
     print(f"  chiaki-ng         : {chiaki or 'NOT FOUND'} ({'ready' if PATCHED_APP.exists() else 'run `senza setup`'})")
     print("  Input capture     : Cocoa in-process NSEvent monitor (zero macOS permissions required)")
+    helper = privileged.helper_status()
+    helper_txt = "ready (no password prompts)" if helper["ready"] else "not installed (`senza helper install`)"
+    print(f"  Root helper       : {helper_txt}")
     return 0
 
 
@@ -411,6 +416,26 @@ def cmd_config(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_helper(args: argparse.Namespace) -> int:
+    """Install/remove the allow-listed root helper so sessions never prompt for a password."""
+    if args.helper_action == "status":
+        st = privileged.helper_status()
+        if args.json:
+            print(json.dumps(st))
+        else:
+            print(f"  Helper     : {st['path']} ({'ready' if st['ready'] else 'not ready'})")
+            print(f"  Trusted    : {'yes' if st['trusted'] else 'no'} (root-owned, not group/world writable)")
+            print(f"  sudoers    : {privileged.SUDOERS_PATH} ({'present' if st['sudoers_rule'] else 'missing'})")
+        return 0 if st["ready"] or args.json else 1
+    if args.helper_action == "install":
+        notes = privileged.install_helper(gui_sudo=args.gui_sudo)
+    else:
+        notes = privileged.uninstall_helper(gui_sudo=args.gui_sudo)
+    for n in notes:
+        print(f"  [helper] {n}")
+    return 1 if any(n.startswith("Warning") or n.startswith("Refusing") for n in notes) else 0
+
+
 def cmd_restore(args: argparse.Namespace) -> int:
     notes = restore_firewall_bypass(gui_sudo=args.gui_sudo)
     notes.extend(restore_from_crash(gui_sudo=args.gui_sudo))
@@ -525,6 +550,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_tun.add_argument("--dry-run", action="store_true", help="Show planned tunnel steps without modifying state")
     p_tun.add_argument("--json", action="store_true", help="Emit JSON output (for `status`)")
     p_tun.set_defaults(func=cmd_tunnel)
+
+    p_help = sub.add_parser(
+        "helper",
+        help="Install/remove the passwordless root helper (one prompt now, none per session)",
+    )
+    p_help.add_argument("helper_action", choices=["install", "uninstall", "status"])
+    p_help.add_argument("--gui-sudo", action="store_true", help="Use the native Touch ID / password dialog")
+    p_help.add_argument("--json", action="store_true", help="Emit JSON (status)")
+    p_help.set_defaults(func=cmd_helper)
 
     p_cfg = sub.add_parser("config", help="Get/set user config (~/.config/senza/config.json): exit-node, network profiles, ...")
     p_cfg.add_argument("config_action", choices=["show", "get", "set", "unset", "path"])

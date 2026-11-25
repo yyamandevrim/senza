@@ -31,3 +31,6 @@ senza = "senza.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["senza*"]
+
+[tool.setuptools.package-data]
+senza = ["resources/*"]
