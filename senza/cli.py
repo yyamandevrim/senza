@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import sys
 from pathlib import Path
+from typing import Any
 
-from . import __version__, privileged
+from . import __version__, history, networks, privileged
 from . import config as user_config
 from .app_bridge import (
     PATCHED_APP,
@@ -42,10 +44,23 @@ from .stream_profile import (
 from .sys_optimizer import SystemOptimizer, restore_from_crash
 
 
-def _print_network_report(host: str) -> tuple[object, object]:
-    print(f"Probing WAN network to {host} ...")
+def _probe_and_record(host: str, source: str) -> tuple[Any, Any, networks.NetworkId | None]:
+    """Probe the WAN, store it in history for this network, and pick a preset (history-aware)."""
     report = probe_network(host=host)
-    preset = recommend_preset(report)
+    net = networks.current_network()
+    net_id = net.id if net else None
+    history.record_probe(report, net_id, source)
+    try:
+        stats = history.network_stats(net_id)
+        preset = recommend_preset(history.conservative_report(report, stats))
+    except Exception:  # history is advisory; never block a launch on it
+        preset = recommend_preset(report)
+    return report, preset, net
+
+
+def _print_network_report(host: str, source: str = "doctor") -> tuple[object, object]:
+    print(f"Probing WAN network to {host} ...")
+    report, preset, net = _probe_and_record(host, source)
 
     print("\n=== Network & macOS Diagnostics ===")
     print(f"  Target host       : {report.host}")
@@ -58,6 +73,8 @@ def _print_network_report(host: str) -> tuple[object, object]:
         print(f"  MTU 1500 (no frag): {'ok' if report.mtu_1500_ok else 'FRAGMENTED (<1500)'}")
     print(f"  Interface         : {report.default_interface} ({'Wi-Fi' if report.is_wifi else 'Wired/Other'})")
     print(f"  AWDL (awdl0)      : {'ACTIVE (lag spike risk)' if report.awdl_active else 'inactive'}")
+    if net is not None:
+        print(f"  Network           : {net.name or 'unsaved'} ({net.id}, router {net.router_ip})")
     if report.noisy_processes:
         print(f"  Background sync   : {', '.join(report.noisy_processes)}")
     print(
@@ -78,9 +95,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     sys_tun = system_tunnel_status(exit_node=args.exit_node)
 
     if args.json:
-        report = probe_network(host=args.host)
-        preset = recommend_preset(report)
+        report, preset, net = _probe_and_record(args.host, "doctor")
+        net_id = net.id if net else None
         payload = {
+            "network_profile": {
+                "id": net_id,
+                "name": net.name if net else None,
+                "router_ip": net.router_ip if net else None,
+                "profile": networks.get_profile(net_id) if net_id else {},
+            },
+            "history": dataclasses.asdict(history.network_stats(net_id)),
             "network": dataclasses.asdict(report),
             "firewall": dataclasses.asdict(fw),
             "system_tunnel": sys_tun,
@@ -174,6 +198,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    if not getattr(args, "no_network_profile", False):
+        applied = networks.apply_to_start_args(args, getattr(args, "_explicit", set()))
+        if applied and applied.changes:
+            label = applied.profile.get("name") or applied.network.id
+            print(f"  [network] '{label}' profile applied: {', '.join(applied.changes)}", flush=True)
     start_hybrid = bool(getattr(args, "hybrid", False))
     use_kbm = start_hybrid or (not args.controller)
     client = args.client
@@ -190,7 +219,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     if client == "chiaki":
         if args.preset == "auto":
-            _, preset = _print_network_report(args.host)
+            _, preset = _print_network_report(args.host, source="start")
         else:
             preset = PRESETS[args.preset]
             print(
@@ -301,7 +330,12 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(f"  [launch] {label} started (pid={real_pid})", flush=True)
         for note in optimizer.boost_process(real_pid, label=label):
             print(f"  [opt] {note}", flush=True)
-        return proc.wait()
+        net = networks.current_network()
+        input_mode = "hybrid" if start_hybrid else ("kbm" if use_kbm else "controller")
+        session_id = history.start_session(net.id if net else None, client, input_mode, args.bypass_firewall)
+        exit_code = proc.wait()
+        history.end_session(session_id, exit_code)
+        return exit_code
     finally:
         if bypass is not None:
             for note in bypass.exit():
@@ -451,6 +485,96 @@ def cmd_helper(args: argparse.Namespace) -> int:
     return 1 if any(n.startswith("Warning") or n.startswith("Refusing") for n in notes) else 0
 
 
+def cmd_network(args: argparse.Namespace) -> int:
+    """Show / save / forget the launch profile for the network you're on."""
+    if args.network_action == "list":
+        profiles = networks.all_profiles()
+        if args.json:
+            print(json.dumps(profiles, indent=2))
+            return 0
+        if not profiles:
+            print("No saved networks. Save the current one with `senza network save --name Home --bypass off`.")
+        for nid, prof in profiles.items():
+            extras = ", ".join(f"{k}={v}" for k, v in prof.items() if k not in ("name", "router_ip"))
+            print(f"  {nid}  {prof.get('name', ''):<16} {extras}")
+        return 0
+    if args.network_action == "forget":
+        cur = networks.current_network()
+        target = args.id or (cur.id if cur else "")
+        ok = bool(target) and networks.forget_profile(target)
+        print(f"Forgot network {target}" if ok else "No saved profile for that network")
+        return 0 if ok else 1
+
+    net = networks.current_network()
+    if net is None:
+        print("ERROR: could not identify the current network (no router on en0/en1).")
+        return 1
+    if args.network_action == "save":
+        privileged_flag = None if args.privileged is None else args.privileged == "on"
+        fallback = None if args.fallback_warp is None else args.fallback_warp == "on"
+        try:
+            prof = networks.save_profile(
+                net,
+                name=args.name,
+                bypass=args.bypass,
+                privileged=privileged_flag,
+                preset=args.preset,
+                exit_node=args.exit_node,
+                warp_bootstrap=args.warp_bootstrap,
+                fallback_warp=fallback,
+            )
+        except ValueError as exc:
+            print(f"ERROR: {exc}")
+            return 2
+        print(json.dumps({"id": net.id, **prof}) if args.json else f"Saved '{prof['name']}' ({net.id}): {prof}")
+        return 0
+    payload = {**net.to_dict(), "profile": networks.get_profile(net.id)}
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(f"  Network  : {net.name or 'unsaved'} ({net.id})")
+        print(f"  Router   : {net.router_ip} ({net.interface})")
+        print(f"  Profile  : {payload['profile'] or 'none (`senza network save --name ...`)'}")
+    return 0
+
+
+def _fmt(v: object, unit: str = "") -> str:
+    return "-" if v is None else f"{v}{unit}"
+
+
+def cmd_history(args: argparse.Namespace) -> int:
+    """Per-network connection quality history (probes + sessions)."""
+    profiles = networks.all_profiles()
+    current = networks.current_network()
+    ids = history.known_networks(days=args.days)
+    if current and current.id not in ids:
+        ids.insert(0, current.id)
+    stats = [history.network_stats(nid, days=args.days) for nid in ids]
+    if args.json:
+        out = []
+        for st in stats:
+            d = dataclasses.asdict(st)
+            d["name"] = profiles.get(st.network_id or "", {}).get("name")
+            d["current"] = bool(current and current.id == st.network_id)
+            d["recent"] = history.recent_probes(st.network_id, limit=args.points)
+            out.append(d)
+        print(json.dumps(out, indent=2))
+        return 0
+    if not stats:
+        print("No history yet. Run `senza doctor` or start a session.")
+        return 0
+    print(f"=== Connection history (last {args.days} days) ===")
+    print(f"  {'Network':<18} {'Probes':>6} {'RTT p50':>8} {'RTT p75':>8} {'Jitter p75':>10} {'Loss':>6} {'Play':>7}")
+    for st in stats:
+        name = profiles.get(st.network_id or "", {}).get("name") or (st.network_id or "unknown")[:12]
+        mark = "*" if current and current.id == st.network_id else " "
+        print(
+            f"{mark} {name:<18} {st.probes:>6} {_fmt(st.rtt_median_ms, ' ms'):>8} {_fmt(st.rtt_p75_ms, ' ms'):>8} "
+            f"{_fmt(st.jitter_p75_ms, ' ms'):>10} {_fmt(st.loss_mean_pct, '%'):>6} {st.play_minutes:>5.0f} m"
+        )
+    return 0
+
+
 def cmd_restore(args: argparse.Namespace) -> int:
     notes = restore_firewall_bypass(gui_sudo=args.gui_sudo)
     notes.extend(restore_from_crash(gui_sudo=args.gui_sudo))
@@ -561,6 +685,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument(
         "--dry-run", action="store_true", help="Show planned actions without modifying system or launching"
     )
+    p_start.add_argument(
+        "--no-network-profile", action="store_true", help="Ignore the saved profile for the current network"
+    )
     p_start.set_defaults(func=cmd_start)
 
     p_tun = sub.add_parser(
@@ -591,6 +718,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_tun.add_argument("--dry-run", action="store_true", help="Show planned tunnel steps without modifying state")
     p_tun.add_argument("--json", action="store_true", help="Emit JSON output (for `status`)")
     p_tun.set_defaults(func=cmd_tunnel)
+
+    p_net = sub.add_parser("network", help="Per-network launch profiles (recognised by router, no Location permission)")
+    p_net.add_argument("network_action", choices=["show", "save", "list", "forget"])
+    p_net.add_argument("id", nargs="?", default=None, help="Network id for `forget` (default: current)")
+    p_net.add_argument("--name", default=None)
+    p_net.add_argument("--bypass", default=None, help="off, auto, dns, warp, tailscale or vpn:<Name>")
+    p_net.add_argument("--privileged", choices=["on", "off"], default=None, help="AWDL fix + UDP boost")
+    p_net.add_argument("--preset", choices=["auto", *PRESETS.keys()], default=None)
+    p_net.add_argument("--exit-node", default=None)
+    p_net.add_argument("--warp-bootstrap", choices=["auto", "always", "never"], default=None)
+    p_net.add_argument("--fallback-warp", choices=["on", "off"], default=None)
+    p_net.add_argument("--json", action="store_true")
+    p_net.set_defaults(func=cmd_network)
+
+    p_hist = sub.add_parser("history", help="Per-network RTT / jitter / loss history and play time")
+    p_hist.add_argument("--days", type=int, default=30)
+    p_hist.add_argument("--points", type=int, default=60, help="Recent probes per network in --json")
+    p_hist.add_argument("--json", action="store_true")
+    p_hist.set_defaults(func=cmd_history)
 
     p_help = sub.add_parser(
         "helper",
@@ -634,9 +780,25 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _explicit_dests(parser: argparse.ArgumentParser, argv: list[str]) -> set[str]:
+    """Option dests the user actually typed (so saved network profiles never override them)."""
+    sub_action = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    explicit: set[str] = set()
+    subparser = next((sub_action.choices[t] for t in argv if t in sub_action.choices), None)
+    if subparser is None:
+        return explicit
+    for action in subparser._actions:
+        for opt in action.option_strings:
+            if any(t == opt or t.startswith(opt + "=") for t in argv):
+                explicit.add(action.dest)
+    return explicit
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+    args._explicit = _explicit_dests(parser, argv)
     return int(args.func(args))
 
 

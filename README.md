@@ -120,6 +120,23 @@ senza tunnel install-service             # 45 s auto-heal LaunchAgent (re-reads 
 
 Resolution order: `--exit-node` flag › `$SENZA_EXIT_NODE` › config file › first exit-node peer in your tailnet.
 
+### Per-network profiles & connection history
+
+Senza recognises the network you're on by its router: the `NetworkSignature` macOS publishes, so it needs no
+Location or Local Network permission, and the fingerprint stays stable while a VPN owns the default route. Save
+how you want to launch on each network, and `senza start` applies it to any option you didn't pass yourself:
+
+```bash
+senza network save --name Home --bypass off --privileged on
+senza network save --name Office --bypass tailscale --privileged on --preset wan-balanced
+senza network show | list | forget
+senza history                  # per-network RTT / jitter / loss and play time (last 30 days)
+```
+
+Every `doctor` probe and session is stored in `~/.local/share/senza/history.sqlite3`. When `--preset auto` picks a
+stream preset, it uses whichever is worse: the live probe or the network's p75 history. That way one lucky quiet
+probe on a usually jittery network doesn't pick 1080p.
+
 ### Passwordless root helper (optional)
 
 The AWDL fix, UDP sysctl boost and Clean DNS need root. If you don't install the helper, each session asks for
