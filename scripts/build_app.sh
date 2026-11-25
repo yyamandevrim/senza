@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="${1:-$ROOT_DIR/build/Senza.app}"
 ICON_PNG="$ROOT_DIR/assets/icon.png"
 ICONSET_DIR="$ROOT_DIR/build/Senza.iconset"
-SWIFT_SRC="$ROOT_DIR/native/gui/SenzaApp.swift"
+SWIFT_SRCS=("$ROOT_DIR"/native/gui/Sources/*.swift)
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
@@ -72,7 +72,7 @@ swiftc \
   -framework AppKit \
   -framework SwiftUI \
   -framework GameController \
-  "$SWIFT_SRC" \
+  "${SWIFT_SRCS[@]}" \
   -o "$APP_DIR/Contents/MacOS/Senza"
 
 chmod +x "$APP_DIR/Contents/MacOS/Senza"
