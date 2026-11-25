@@ -407,7 +407,6 @@ void hud_assist(SzAssist kind, float sx, float sy) {
 static PsrHudPanel *g_net_panel = nil;
 atomic_bool g_net_visible = false;
 atomic_bool g_net_thread_active = false;
-static pthread_t g_net_thread;
 
 bool hud_net_visible(void) { return atomic_load(&g_net_visible); }
 
@@ -443,10 +442,7 @@ void hud_net_set_visible(bool visible) {
     atomic_store(&g_net_visible, true);
     net_render(@"Ölçülüyor", SZ_TONE_NEUTRAL);
     [g_net_panel orderFrontRegardless];
-    if (!atomic_exchange(&g_net_thread_active, true)) {
-        pthread_create(&g_net_thread, NULL, net_telemetry_thread, NULL);
-        pthread_detach(g_net_thread);
-    }
+    net_telemetry_start();
 }
 
 /* ==================== Key labels ==================== */

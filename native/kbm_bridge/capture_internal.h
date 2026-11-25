@@ -19,6 +19,7 @@
 #include "config_loader.h"
 #include "macos_capture.h"
 #import "hud.h"
+#include "net_quality.h"
 
 #include <ctype.h>
 #include <ifaddrs.h>
@@ -90,6 +91,7 @@ NSScreen *active_screen_on_main(void);
 bool check_awdl_is_up(void);
 void sanitize_ping_host(char *out, size_t out_sz);
 void *net_telemetry_thread(void *arg);
+void net_telemetry_start(void);
 int16_t phys_float_to_axis(float v);
 int16_t phys_float_to_trigger(float v);
 void stop_phys_haptics_locked(void);

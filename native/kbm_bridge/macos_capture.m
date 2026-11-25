@@ -529,6 +529,9 @@ void install_cocoa_monitors_on_main(void) {
         }];
         refresh_phys_controllers_on_main(false);
 
+        /* Session-wide connection quality watch (mid-game "connection degraded" toast) */
+        net_telemetry_start();
+
         /* Seed runtime profile mtime for zero-restart Studio hot-reload */
         check_profile_hot_reload_on_main();
 

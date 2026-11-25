@@ -1,5 +1,6 @@
 #include "config_loader.h"
 #include "mapper_core.h"
+#include "net_quality.h"
 
 #include <assert.h>
 #include <math.h>
@@ -476,7 +477,31 @@ static void test_nonfinite_inputs_never_reach_pad(void) {
     assert(!m.pad.touch_active || (m.pad.touch_x <= 1919 && m.pad.touch_y <= 1079));
 }
 
+static void test_quality_watch_degrade_cooldown_recover(void) {
+    SzQualityState q = {0};
+    uint64_t t = 1000;
+    /* one bad sample is noise, two in a row is a warning */
+    assert(sz_quality_step(&q, 120.0, 30.0, 0.0, true, t) == SZ_QUALITY_NONE);
+    assert(sz_quality_step(&q, 120.0, 30.0, 0.0, true, t += 5000) == SZ_QUALITY_DEGRADED);
+    /* still bad: no repeated warnings */
+    assert(sz_quality_step(&q, 0, 0, 100.0, false, t += 5000) == SZ_QUALITY_NONE);
+    /* three good samples -> recovered */
+    assert(sz_quality_step(&q, 20.0, 2.0, 0.0, true, t += 5000) == SZ_QUALITY_NONE);
+    assert(sz_quality_step(&q, 20.0, 2.0, 0.0, true, t += 5000) == SZ_QUALITY_NONE);
+    assert(sz_quality_step(&q, 20.0, 2.0, 0.0, true, t += 5000) == SZ_QUALITY_RECOVERED);
+    /* degrading again inside the 3 min cooldown stays quiet, after it warns again */
+    sz_quality_step(&q, 0, 0, 100.0, false, t += 5000);
+    assert(sz_quality_step(&q, 0, 0, 100.0, false, t += 5000) == SZ_QUALITY_NONE);
+    sz_quality_step(&q, 20.0, 2.0, 0.0, true, t += 5000); /* breaks the bad streak */
+    t += SZ_QUALITY_WARN_COOLDOWN_MS;
+    sz_quality_step(&q, 0, 0, 100.0, false, t);
+    assert(sz_quality_step(&q, 0, 0, 100.0, false, t += 5000) == SZ_QUALITY_DEGRADED);
+    /* a middling sample neither warns nor counts toward recovery */
+    assert(!sz_quality_is_bad(70.0, 10.0, 1.5, true) && !sz_quality_is_good(70.0, 10.0, 1.5, true));
+}
+
 int main(void) {
+    test_quality_watch_degrade_cooldown_recover();
     test_config_sanitize_rejects_nonfinite_and_out_of_range();
     test_nonfinite_inputs_never_reach_pad();
     test_wasd_diagonal_normalization();
