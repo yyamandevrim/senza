@@ -21,6 +21,16 @@ uint8_t g_last_led_r = 0;
 uint8_t g_last_led_g = 0;
 uint8_t g_last_led_b = 0;
 bool g_has_led_color = false;
+int g_prev_assist_kind = 0;   /* SzAssist last shown */
+bool g_prev_aiming_bar = false;
+
+static SzHudState hud_state(bool capture, int mode, bool aiming, bool smart) {
+    return (SzHudState){.capture = capture, .mode = mode, .aiming = aiming, .smart = smart};
+}
+
+static NSString *mode_label(int mode) {
+    return mode == 2 ? @"Uçak" : (mode == 1 ? @"Araç" : @"Yaya");
+}
 
 uint64_t cap_now_ns(void) {
     if (g_cap_timebase.denom == 0) {
@@ -106,11 +116,9 @@ void check_profile_hot_reload_on_main(void) {
     fprintf(stderr, "[senza] Hot-reloaded profile from %s (sens=%.2f, deadzone=%.2f)\n",
             cfg_path, reloaded.sensitivity, reloaded.deadzone);
     fflush(stderr);
-    refresh_prompt_bar_on_main(cap_on, mode_id, aiming, smart);
-    show_toast_on_main(
-        [NSString stringWithFormat:@"✦ PROFİL GÜNCELLENDİ (Canlı · %.2fx)", reloaded.sensitivity],
-        [NSColor colorWithRed:0.55 green:0.94 blue:1.0 alpha:1.0]
-    );
+    hud_prompt_refresh(hud_state(cap_on, mode_id, aiming, smart));
+    hud_toast(SZ_TONE_GOOD, @"Profil yeniden yüklendi",
+              [NSString stringWithFormat:@"hassasiyet %.2f", reloaded.sensitivity]);
 }
 
 void set_mouse_coalescing_safe(BOOL enabled) {
@@ -374,106 +382,70 @@ NSEvent *handle_local_nsevent(NSEvent *event) {
     pthread_mutex_unlock(&g_lock);
 
     /* handle_local_nsevent always runs on main thread */
-    if (!now_capture && g_assist_visible) {
-        update_assist_pill_on_main(NO, nil, nil);
+    SzHudState st = hud_state(now_capture, now_mode, now_aiming, now_smart);
+    if (!now_capture && hud_assist_visible()) {
+        hud_assist(SZ_ASSIST_NONE, 0, 0);
     }
 
     if (toggle_net_now) {
-        set_net_visible_on_main(!atomic_load(&g_net_visible));
+        hud_net_set_visible(!hud_net_visible());
     }
 
     if (toggle_prompt_now) {
-        g_prompt_enabled = !g_prompt_enabled;
-        refresh_prompt_bar_on_main(now_capture, now_mode, now_aiming, now_smart);
-        show_toast_on_main(
-            g_prompt_enabled
-                ? @"● PS → KLAVYE ALT ÇUBUĞU AÇIK (\\ ile gizle)"
-                : @"○ PS → KLAVYE ALT ÇUBUĞU GİZLENDİ (\\ ile aç)",
-            g_prompt_enabled
-                ? [NSColor colorWithRed:0.46 green:0.90 blue:1.0 alpha:1.0]
-                : [NSColor colorWithRed:0.86 green:0.86 blue:0.90 alpha:1.0]
-        );
+        bool on = hud_prompt_toggle(st);
+        hud_toast(SZ_TONE_NEUTRAL, on ? @"Alt çubuk açık" : @"Alt çubuk gizlendi", @"{\\}");
     }
 
     int cur_src = (atomic_load(&g_input_source) == 1 && atomic_load(&g_phys_connected)) ? 1 : 0;
 
     if (capture_changed || mode_changed || smart_changed) {
         g_prev_aiming_bar = now_aiming;
-        refresh_prompt_bar_on_main(now_capture, now_mode, now_aiming, now_smart);
+        hud_prompt_refresh(st);
     }
 
     if (sens_changed) {
         persist_sensitivity_async(now_sens);
-        NSString *msg = [NSString stringWithFormat:@"✦ TRACKPAD HASSASİYETİ: %.2fx (Kaydedildi)", now_sens];
-        show_toast_on_main(msg, [NSColor colorWithRed:0.55 green:0.94 blue:1.0 alpha:1.0]);
+        hud_toast(SZ_TONE_NEUTRAL, [NSString stringWithFormat:@"Hassasiyet %.2f", now_sens], @"kaydedildi");
     } else if (mic_tapped) {
-        show_toast_on_main(@"● PS5 MİKROFON (MUTE TUŞU GÖNDERİLDİ)", [NSColor colorWithRed:1.0 green:0.74 blue:0.46 alpha:1.0]);
+        hud_toast(SZ_TONE_NEUTRAL, @"PS5 mikrofonu", @"sessize alma gönderildi");
     } else if (toggle_hud_now) {
-        set_hud_visible_on_main(!g_hud_visible, now_capture, now_mode, now_smart);
+        hud_panel_set_visible(!hud_panel_visible(), st);
     } else if (capture_changed || mode_changed || smart_changed) {
-        if (g_hud_visible) {
-            if (g_hud_last_mode != now_mode ||
-                g_hud_last_capture != (now_capture ? YES : NO) ||
-                g_hud_last_smart != (now_smart ? YES : NO) ||
-                g_hud_last_source != cur_src) {
-                rebuild_hud_content_on_main(now_capture, now_mode, now_smart);
-            }
+        if (hud_panel_visible()) {
+            hud_panel_refresh(st);
         } else if (smart_changed) {
-            NSString *msg = now_smart
-                ? @"✦ AKILLI MOD AÇIK · F:Oto-Araç · V:Omuz · U/I/Y/L"
-                : @"○ AKILLI MOD KAPALI (Ham Kontrol · [T] Aç)";
-            NSColor *col = now_smart
-                ? [NSColor colorWithRed:0.65 green:0.95 blue:0.75 alpha:1.0]
-                : [NSColor colorWithRed:0.86 green:0.86 blue:0.90 alpha:1.0];
-            show_toast_on_main(msg, col);
+            if (now_smart) {
+                hud_toast(SZ_TONE_GOOD, @"Akıllı mod açık", @"{F} araca bin   {V} omuz   {U}{I}{Y}{L} yardımlar");
+            } else {
+                hud_toast(SZ_TONE_NEUTRAL, @"Akıllı mod kapalı", @"{T} aç");
+            }
         } else if (mode_changed) {
-            NSString *msg;
-            NSColor *col;
-            if (now_mode == 2) {
-                msg = @"✈ UÇAK · W/S:Gaz · ↑↓←→:Uçuş · Q/E:Dümen (▢/◯) · Space:Ateş (R1)";
-                col = [NSColor colorWithRed:0.78 green:0.64 blue:1.0 alpha:1.0];
-            } else if (now_mode == 1) {
-                msg = mode_was_auto
-                    ? @"✦ OTO ARAÇ · W/S:Gaz/Fren · Space:ElFreni(✕) · Tık:Ateş(R1) · F:İn"
-                    : @"🚗 ARAÇ · W/S:Gaz/Fren · Space:ElFreni(✕) · Tık:Ateş(R1) · C:Far";
-                col = [NSColor colorWithRed:1.0 green:0.78 blue:0.38 alpha:1.0];
-            } else {
-                msg = mode_was_auto
-                    ? @"✦ OTO YAYA MODU · WASD + Trackpad · [H] Tuşlar · [\\] AltÇubuk"
-                    : @"YAYA MODU · WASD + Trackpad · [H] Tuşlar · [\\] AltÇubuk";
-                col = [NSColor colorWithRed:0.48 green:0.88 blue:1.0 alpha:1.0];
-            }
-            show_toast_on_main(msg, col);
+            NSString *title = mode_was_auto
+                ? [NSString stringWithFormat:@"%@ modu · otomatik", mode_label(now_mode)]
+                : [NSString stringWithFormat:@"%@ modu", mode_label(now_mode)];
+            NSString *detail = now_mode == 2 ? @"{W}{S} gaz   ok tuşları uçuş   {Q}{E} dümen"
+                             : now_mode == 1 ? @"{W}{S} gaz, fren   {Space} el freni   {F} in"
+                                             : @"{H} tuşlar   {\\} alt çubuk";
+            hud_toast(SZ_TONE_NEUTRAL, title, detail);
         } else if (capture_changed) {
-            NSString *modeTag = now_mode == 2 ? @"UÇAK" : (now_mode == 1 ? @"ARAÇ" : @"YAYA");
-            NSString *msg;
-            NSColor *col;
             if (now_capture) {
-                msg = [NSString stringWithFormat:@"● KİLİTLİ (%@) · [0] Bırak · [\\] AltÇubuk · [H] Tuşlar", modeTag];
-                col = [NSColor colorWithRed:0.45 green:0.96 blue:0.64 alpha:1.0];
+                hud_toast(SZ_TONE_GOOD, @"Kontrol kilitlendi",
+                          [NSString stringWithFormat:@"%@   {0} bırak   {H} tuşlar", mode_label(now_mode)]);
             } else if (cur_src == 1) {
-                msg = @"● DUALSENSE AKTİF (İmleç Serbest) · [0] Trackpad · [;] Ping · [H] HUD";
-                col = [NSColor colorWithRed:0.44 green:0.96 blue:0.68 alpha:1.0];
+                hud_toast(SZ_TONE_GOOD, @"DualSense aktif", @"{0} trackpad   {;} ping   {H} panel");
             } else {
-                msg = @"○ İMLEÇ SERBEST · [0] Tekrar Kilitle";
-                col = [NSColor colorWithRed:0.88 green:0.88 blue:0.90 alpha:1.0];
+                hud_toast(SZ_TONE_NEUTRAL, @"İmleç serbest", @"{0} tekrar kilitle");
             }
-            show_toast_on_main(msg, col);
         }
     } else if (cruise_changed) {
-        NSString *msg;
         if (now_cruise) {
-            msg = now_mode == 2
-                ? @"● OTO-UÇUŞ SEYRİ AÇIK (W/S/Space: İptal)"
-                : (now_mode == 1 ? @"● HIZ SABİTLEYİCİ AÇIK (W/S/Space: İptal)" : @"● OTOMATİK KOŞMA AÇIK (W/S/Space: İptal)");
+            NSString *t = now_mode == 2 ? @"Otomatik uçuş açık" : (now_mode == 1 ? @"Sabit hız açık" : @"Otomatik koşu açık");
+            hud_toast(SZ_TONE_GOOD, t, @"{W} {S} {Space} iptal");
         } else {
-            msg = @"○ SEYİR / OTO-KOŞ İPTAL";
+            hud_toast(SZ_TONE_NEUTRAL, @"Sabit hız kapandı", nil);
         }
-        NSColor *col = now_cruise
-            ? [NSColor colorWithRed:0.50 green:0.92 blue:1.0 alpha:1.0]
-            : [NSColor colorWithRed:0.85 green:0.85 blue:0.88 alpha:1.0];
-        show_toast_on_main(msg, col);
     }
+    (void)cur_src;
 
     return consume ? nil : event;
 }
@@ -516,15 +488,8 @@ void install_cocoa_monitors_on_main(void) {
             }
             apply_cursor_lock_locked(false);
             pthread_mutex_unlock(&g_lock);
-            set_hud_visible_on_main(NO, false, 0, true);
-            refresh_prompt_bar_on_main(false, 0, false, true);
+            hud_hide_all();
             g_prev_aiming_bar = false;
-            update_assist_pill_on_main(NO, nil, nil);
-            set_net_visible_on_main(NO);
-            if (g_toast_panel != nil) {
-                ++g_toast_gen;
-                [g_toast_panel orderOut:nil];
-            }
         }];
 
         g_become_observer = [nc addObserverForName:NSApplicationDidBecomeActiveNotification
@@ -637,40 +602,12 @@ void psr_capture_stop(void) {
 
     dispatch_block_t teardown = ^{
         @autoreleasepool {
-            ++g_toast_gen;
             if (g_window_watch_timer != nil) {
                 dispatch_source_cancel(g_window_watch_timer);
                 g_window_watch_timer = nil;
             }
-            if (g_toast_panel != nil) {
-                [g_toast_panel orderOut:nil];
-                g_toast_panel = nil;
-                g_toast_label = nil;
-            }
-            if (g_assist_panel != nil) {
-                [g_assist_panel orderOut:nil];
-                g_assist_panel = nil;
-                g_assist_label = nil;
-                g_assist_visible = NO;
-            }
-            if (g_net_panel != nil) {
-                [g_net_panel orderOut:nil];
-                g_net_panel = nil;
-                g_net_label = nil;
-            }
-            if (g_prompt_panel != nil) {
-                [g_prompt_panel orderOut:nil];
-                g_prompt_panel = nil;
-                g_prompt_label = nil;
-                g_prompt_visible = NO;
-                g_prev_aiming_bar = false;
-            }
-            if (g_hud_panel != nil) {
-                [g_hud_panel orderOut:nil];
-                g_hud_panel = nil;
-                g_hud_bg_view = nil;
-                g_hud_visible = NO;
-            }
+            hud_teardown();
+            g_prev_aiming_bar = false;
             if (g_local_monitor != nil) {
                 [NSEvent removeMonitor:g_local_monitor];
                 g_local_monitor = nil;
@@ -734,17 +671,13 @@ void psr_capture_sample_state(float dt_ms, PsrPadState *out_state) {
         dispatch_async(dispatch_get_main_queue(), ^{
             apply_cursor_lock_locked(false);
             g_prev_aiming_bar = false;
-            refresh_prompt_bar_on_main(false, mode_id, false, smart);
-            if (g_assist_visible) {
-                update_assist_pill_on_main(NO, nil, nil);
-            }
-            if (g_hud_visible) {
-                rebuild_hud_content_on_main(false, mode_id, smart);
+            SzHudState st = hud_state(false, mode_id, false, smart);
+            hud_prompt_refresh(st);
+            hud_assist(SZ_ASSIST_NONE, 0, 0);
+            if (hud_panel_visible()) {
+                hud_panel_refresh(st);
             } else {
-                show_toast_on_main(
-                    @"● DUALSENSE HOT-SWAP · [0] Trackpad · [;] Ping · [H] HUD",
-                    [NSColor colorWithRed:0.44 green:0.96 blue:0.68 alpha:1.0]
-                );
+                hud_toast(SZ_TONE_GOOD, @"DualSense'e geçildi", @"{0} trackpad   {;} ping   {H} panel");
             }
         });
     }
@@ -762,7 +695,7 @@ void psr_capture_sample_state(float dt_ms, PsrPadState *out_state) {
         if (g_prev_assist_kind != 0) {
             g_prev_assist_kind = 0;
             dispatch_async(dispatch_get_main_queue(), ^{
-                update_assist_pill_on_main(NO, nil, nil);
+                hud_assist(SZ_ASSIST_NONE, 0, 0);
             });
         }
         return;
@@ -805,7 +738,7 @@ void psr_capture_sample_state(float dt_ms, PsrPadState *out_state) {
     if (aiming_now != g_prev_aiming_bar) {
         g_prev_aiming_bar = aiming_now;
         dispatch_async(dispatch_get_main_queue(), ^{
-            refresh_prompt_bar_on_main(cap_now, mode_now, aiming_now, smart_now);
+            hud_prompt_refresh(hud_state(cap_now, mode_now, aiming_now, smart_now));
         });
     }
 
@@ -819,37 +752,7 @@ void psr_capture_sample_state(float dt_ms, PsrPadState *out_state) {
         g_last_assist_ui_ns = now;
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (assist_kind == 1) {
-                update_assist_pill_on_main(
-                    YES,
-                    @"● HOTWIRE (R) ◡ OTOMATİK TARAMA",
-                    [NSColor colorWithRed:1.0 green:0.82 blue:0.35 alpha:1.0]
-                );
-            } else if (assist_kind == 2) {
-                update_assist_pill_on_main(
-                    YES,
-                    @"● TAM DAİRE (R) ↻ 360° DÖNDÜRME",
-                    [NSColor colorWithRed:1.0 green:0.76 blue:0.42 alpha:1.0]
-                );
-            } else if (assist_kind == 3) {
-                NSString *glyph = stick_direction_glyph(srx, sry);
-                int px = (int)lroundf(srx * 100.0f);
-                int py = (int)lroundf(sry * 100.0f);
-                NSString *txt = [NSString stringWithFormat:@"● SAĞ ANALOG %@ (%+d%%, %+d%%) · Bırak: Sıfırla", glyph, px, py];
-                update_assist_pill_on_main(
-                    YES,
-                    txt,
-                    [NSColor colorWithRed:0.48 green:0.92 blue:1.0 alpha:1.0]
-                );
-            } else if (assist_kind == 4) {
-                update_assist_pill_on_main(
-                    YES,
-                    @"● HIZLI ✕ (QTE / BİSİKLET / YÜZME)",
-                    [NSColor colorWithRed:0.46 green:0.96 blue:0.64 alpha:1.0]
-                );
-            } else {
-                update_assist_pill_on_main(NO, nil, nil);
-            }
+            hud_assist((SzAssist)assist_kind, srx, sry);
         });
     }
 }
@@ -886,7 +789,7 @@ void psr_capture_on_dualsense_feedback(const PsrDualSenseFeedback *fb) {
                 uint8_t b = fb->led_b;
                 dispatch_async(dispatch_get_main_queue(), ^{
                     forward_phys_lightbar_on_main(r, g, b);
-                    apply_lightbar_border_on_main(r, g, b);
+                    hud_lightbar(r, g, b);
                 });
             }
         }
@@ -941,7 +844,7 @@ void psr_capture_on_dualsense_feedback(const PsrDualSenseFeedback *fb) {
             uint8_t g = fb->led_g;
             uint8_t b = fb->led_b;
             dispatch_async(dispatch_get_main_queue(), ^{
-                apply_lightbar_border_on_main(r, g, b);
+                hud_lightbar(r, g, b);
             });
         }
     }

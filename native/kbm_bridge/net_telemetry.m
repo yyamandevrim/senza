@@ -78,27 +78,9 @@ void *net_telemetry_thread(void *arg) {
 
         if (!atomic_load(&g_net_visible) || !atomic_load(&g_running)) break;
 
-        NSString *text = nil;
-        NSColor *col = nil;
-        const char *awdl_str = awdl_up ? "AWDL ON!" : "AWDL OFF";
-
-        if (avg_ms < 0.0) {
-            text = [NSString stringWithFormat:@"● PING YOK · %s", awdl_str];
-            col = [NSColor colorWithRed:1.0 green:0.42 blue:0.42 alpha:1.0];
-        } else {
-            text = [NSString stringWithFormat:@"● %.0fms · ±%.1fms · %.0f%% · %s",
-                    avg_ms, jitter_ms, loss_pct, awdl_str];
-            if (loss_pct > 0.5 || avg_ms >= 75.0 || awdl_up) {
-                col = [NSColor colorWithRed:1.0 green:0.48 blue:0.42 alpha:1.0];
-            } else if (avg_ms >= 35.0 || jitter_ms >= 8.0) {
-                col = [NSColor colorWithRed:1.0 green:0.80 blue:0.38 alpha:1.0];
-            } else {
-                col = [NSColor colorWithRed:0.44 green:0.96 blue:0.64 alpha:1.0];
-            }
-        }
-
+        bool reachable = avg_ms >= 0.0;
         dispatch_async(dispatch_get_main_queue(), ^{
-            update_net_pill_on_main(text, col);
+            hud_net_update(avg_ms, jitter_ms, loss_pct, awdl_up, reachable);
         });
 
         /* Sleep 2.0s in 100ms chunks so stopping is instantaneous */

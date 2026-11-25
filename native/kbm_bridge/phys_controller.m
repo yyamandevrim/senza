@@ -81,8 +81,7 @@ void refresh_phys_controllers_on_main(bool announce_toast) {
     if (!now_connected) {
         atomic_store(&g_input_source, 0);
         if (changed && announce_toast) {
-            show_toast_on_main(@"○ DUALSENSE BAĞLANTISI KESİLDİ · [0] Trackpad Modu",
-                               [NSColor colorWithRed:1.0 green:0.74 blue:0.42 alpha:1.0]);
+            hud_toast(SZ_TONE_WARN, @"DualSense bağlantısı kesildi", @"{0} trackpad modu");
         }
         return;
     }
@@ -109,12 +108,10 @@ void refresh_phys_controllers_on_main(bool announce_toast) {
         fprintf(stderr, "[senza] Physical controller ready (Hybrid Hot-Swap): %s\n", [ctrlName UTF8String]);
         fflush(stderr);
         if (announce_toast) {
-            NSString *msg = [NSString stringWithFormat:@"● %@ BAĞLANDI · Oynat veya [0] Trackpad · [;] Ping", ctrlName];
-            show_toast_on_main(msg, [NSColor colorWithRed:0.44 green:0.96 blue:0.64 alpha:1.0]);
+            hud_toast(SZ_TONE_GOOD, [NSString stringWithFormat:@"%@ bağlandı", ctrlName],
+                      @"oynamaya başla ya da {0} trackpad");
         }
-        if (g_hud_visible) {
-            rebuild_hud_content_on_main(cap_on, mode_id, smart);
-        }
+        hud_panel_refresh((SzHudState){.capture = cap_on, .mode = mode_id, .aiming = false, .smart = smart});
     }
 }
 

@@ -20,7 +20,7 @@ COMMON_M := macos_capture.m hud.m net_telemetry.m phys_controller.m window_watch
 COMMON_OBJS := $(addprefix $(OBJ_DIR)/,$(COMMON_C:.c=.o) $(COMMON_M:.m=.o))
 NATIVE_HEADERS := $(wildcard $(NATIVE_DIR)/*.h)
 
-.PHONY: all build app install install-app uninstall test test-c test-py test-sanitize lint clean
+.PHONY: all build app install install-app uninstall test test-c test-py test-sanitize hud-preview lint clean
 
 all: build
 
@@ -83,6 +83,13 @@ test-sanitize:
 	./$(BUILD_DIR)/test_mapper_core_san
 	./$(BUILD_DIR)/test_native_fuzz_san $(FUZZ_ITERS) 1
 	./$(BUILD_DIR)/test_native_fuzz_san $(FUZZ_ITERS) 0xdeadbeef
+
+# Render every in-game HUD state to build/hud-preview/*.png (no Remote Play needed)
+hud-preview: $(COMMON_OBJS) $(OBJ_DIR)/iokit_dualsense_pad.o tools/hud_preview.m
+	$(CC) $(OBJCFLAGS) tools/hud_preview.m $(COMMON_OBJS) $(OBJ_DIR)/iokit_dualsense_pad.o \
+		-o $(BUILD_DIR)/hud_preview $(SONY_FRAMEWORKS) -lm
+	./bin/senza export-profile --output $(BUILD_DIR)/hud-preview.cfg >/dev/null
+	./$(BUILD_DIR)/hud_preview $(BUILD_DIR)/hud-preview $(BUILD_DIR)/hud-preview.cfg
 
 lint:
 	ruff check senza tests
