@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
+from .config import config_path
 from .state import atomic_write_text
 
 # macOS HIToolbox virtual keycodes + synthetic mouse codes matching mapper_core.h
@@ -119,14 +121,89 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PROFILES_DIR = REPO_ROOT / "profiles"
 
 
+_NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def user_profiles_dir() -> Path:
+    """User profiles live next to config.json and shadow built-in ones with the same name."""
+    return config_path().parent / "profiles"
+
+
+def _check_name(name: str) -> str:
+    if not _NAME_OK.match(name):
+        raise ValueError(f"Invalid profile name '{name}' (letters, digits, . _ - ; max 64)")
+    return name
+
+
 def resolve_profile_path(profile_name_or_path: str) -> Path:
-    candidate = Path(profile_name_or_path)
+    candidate = Path(profile_name_or_path).expanduser()
+    if candidate.suffix == ".json" and candidate.is_file():
+        return candidate
+    for base in (user_profiles_dir(), PROFILES_DIR):
+        by_name = base / f"{profile_name_or_path}.json"
+        if by_name.is_file():
+            return by_name
     if candidate.is_file():
         return candidate
-    by_name = PROFILES_DIR / f"{profile_name_or_path}.json"
-    if by_name.is_file():
-        return by_name
-    raise FileNotFoundError(f"Profile not found: {profile_name_or_path} (looked in {PROFILES_DIR})")
+    raise FileNotFoundError(
+        f"Profile not found: {profile_name_or_path} (looked in {user_profiles_dir()} and {PROFILES_DIR})"
+    )
+
+
+def list_profiles() -> list[dict[str, Any]]:
+    seen: dict[str, dict[str, Any]] = {}
+    for source, base in (("builtin", PROFILES_DIR), ("user", user_profiles_dir())):
+        for f in sorted(base.glob("*.json")) if base.is_dir() else []:
+            try:
+                desc = str(json.loads(f.read_text(encoding="utf-8")).get("description", ""))
+            except (OSError, ValueError):
+                desc = "(unreadable)"
+            seen[f.stem] = {"name": f.stem, "source": source, "path": str(f), "description": desc}
+    return sorted(seen.values(), key=lambda x: x["name"])
+
+
+def import_profile(src: Path, name: str | None = None, overwrite: bool = False) -> Path:
+    """Validate a profile JSON file and copy it into the user profile directory."""
+    data = json.loads(Path(src).expanduser().read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Profile must be a JSON object")
+    validate_profile(data)
+    target_name = _check_name(name or str(data.get("name") or Path(src).stem))
+    dest = user_profiles_dir() / f"{target_name}.json"
+    if dest.exists() and not overwrite:
+        raise FileExistsError(f"{dest} exists (use --force to replace it)")
+    data["name"] = target_name
+    atomic_write_text(dest, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    return dest
+
+
+def export_profile(name: str, dest: Path) -> Path:
+    data = load_profile(name)
+    out = Path(dest).expanduser()
+    if out.is_dir():
+        out = out / f"{data.get('name') or name}.json"
+    atomic_write_text(out, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    return out
+
+
+def new_profile(name: str, base: str = "gta6", description: str | None = None) -> Path:
+    data = load_profile(base)
+    data["name"] = _check_name(name)
+    if description:
+        data["description"] = description
+    dest = user_profiles_dir() / f"{name}.json"
+    if dest.exists():
+        raise FileExistsError(f"{dest} already exists")
+    atomic_write_text(dest, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    return dest
+
+
+def remove_profile(name: str) -> bool:
+    path = user_profiles_dir() / f"{_check_name(name)}.json"
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
 
 
 def _key_to_code(name: str) -> int:

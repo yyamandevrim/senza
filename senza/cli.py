@@ -634,6 +634,41 @@ def cmd_onboard(args: argparse.Namespace) -> int:
     return 0 if result["ready"] else 1
 
 
+def cmd_profile(args: argparse.Namespace) -> int:
+    """Manage control profiles: built-in ones ship in profiles/, yours live in ~/.config/senza/profiles/."""
+    from . import profiles as prof
+
+    try:
+        if args.profile_action == "list":
+            items = prof.list_profiles()
+            if args.json:
+                print(json.dumps(items, indent=2))
+            for it in [] if args.json else items:
+                print(f"  {it['name']:<16} {it['source']:<8} {it['description'][:70]}")
+            return 0
+        if not args.name:
+            print("ERROR: profile name (or file for import) required")
+            return 2
+        if args.profile_action == "new":
+            path = prof.new_profile(args.name, base=args.base, description=args.description)
+        elif args.profile_action == "import":
+            path = prof.import_profile(Path(args.name), name=args.as_name, overwrite=args.force)
+        elif args.profile_action == "export":
+            if not args.dest:
+                print("ERROR: destination file or directory required")
+                return 2
+            path = prof.export_profile(args.name, Path(args.dest))
+        else:
+            removed = prof.remove_profile(args.name)
+            print(f"Removed {args.name}" if removed else f"No user profile named {args.name}")
+            return 0 if removed else 1
+    except (FileNotFoundError, FileExistsError, ValueError) as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    print(json.dumps({"ok": True, "path": str(path)}) if args.json else f"  {args.profile_action}: {path}")
+    return 0
+
+
 def cmd_restore(args: argparse.Namespace) -> int:
     notes = restore_firewall_bypass(gui_sudo=args.gui_sudo)
     notes.extend(restore_from_crash(gui_sudo=args.gui_sudo))
@@ -782,6 +817,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_tun.add_argument("--dry-run", action="store_true", help="Show planned tunnel steps without modifying state")
     p_tun.add_argument("--json", action="store_true", help="Emit JSON output (for `status`)")
     p_tun.set_defaults(func=cmd_tunnel)
+
+    p_prof = sub.add_parser("profile", help="List / create / import / export control profiles")
+    p_prof.add_argument("profile_action", choices=["list", "new", "import", "export", "remove"])
+    p_prof.add_argument("name", nargs="?", default=None, help="Profile name (or JSON file for import)")
+    p_prof.add_argument("dest", nargs="?", default=None, help="Destination for export")
+    p_prof.add_argument("--base", default="gta6", help="Profile to copy for `new` (default: gta6)")
+    p_prof.add_argument("--description", default=None)
+    p_prof.add_argument("--as", dest="as_name", default=None, help="Name to import under")
+    p_prof.add_argument("--force", action="store_true", help="Replace an existing user profile on import")
+    p_prof.add_argument("--json", action="store_true")
+    p_prof.set_defaults(func=cmd_profile)
 
     p_onb = sub.add_parser("onboard", help="First-run readiness checklist with one-line fixes")
     p_onb.add_argument("--json", action="store_true")

@@ -166,5 +166,47 @@ class TestExitNodeSelection(unittest.TestCase):
         self.assertEqual(chosen, "100.64.0.3")  # no usable node: return primary for a clear error later
 
 
+class TestProfileManagement(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._env = mock.patch.dict(os.environ, {"SENZA_CONFIG": str(Path(self._tmp.name) / "cfg" / "config.json")})
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def test_new_export_import_shadow_remove(self) -> None:
+        import json
+
+        from senza import profiles as prof
+
+        path = prof.new_profile("rdr", base="gta6", description="Wild west")
+        self.assertEqual(prof.resolve_profile_path("rdr"), path)
+        out = prof.export_profile("rdr", Path(self._tmp.name))
+        self.assertEqual(json.loads(out.read_text())["description"], "Wild west")
+        with self.assertRaises(FileExistsError):
+            prof.import_profile(out, name="rdr")
+        imported = prof.import_profile(out, name="gta6")  # user copy shadows the built-in
+        self.assertEqual(prof.resolve_profile_path("gta6"), imported)
+        names = {p["name"]: p["source"] for p in prof.list_profiles()}
+        self.assertEqual(names, {"gta6": "user", "rdr": "user"})
+        self.assertTrue(prof.remove_profile("gta6"))
+        self.assertEqual(prof.resolve_profile_path("gta6"), prof.PROFILES_DIR / "gta6.json")
+
+    def test_import_rejects_invalid(self) -> None:
+        import json
+
+        from senza import profiles as prof
+
+        bad = Path(self._tmp.name) / "bad.json"
+        bad.write_text(json.dumps({"name": "x", "hotkeys": {}}))
+        with self.assertRaises((ValueError, KeyError)):
+            prof.import_profile(bad)
+        with self.assertRaises(ValueError):
+            prof.new_profile("../escape")
+        self.assertFalse((Path(self._tmp.name) / "cfg" / "profiles" / "x.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
