@@ -99,9 +99,11 @@ gui-preview: $(GUI_SOURCES) tools/gui_preview.swift
 		$(GUI_SOURCES) tools/gui_preview.swift -o $(BUILD_DIR)/gui_preview
 	./$(BUILD_DIR)/gui_preview $(BUILD_DIR)/gui-preview
 
+# Keep in sync with .github/workflows/ci.yml
+RUFF_VERSION := 0.8.4
 lint:
-	ruff check senza tests
-	ruff format --check senza tests
+	uvx ruff@$(RUFF_VERSION) check senza tests
+	uvx ruff@$(RUFF_VERSION) format --check senza tests
 	sh -n senza/resources/senza-priv
 
 test-py:
