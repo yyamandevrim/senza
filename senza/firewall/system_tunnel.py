@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .. import notify as _notify
 from ..state import atomic_write_json, read_json_dict
 from . import bypass as _bypass
 from . import probes as _probes
@@ -201,7 +202,8 @@ def system_tunnel_ensure(
             if active and ex_online and (active.lower() == target.lower() or active.lower() in peer_ips):
                 return [f"OK: Tailscale exit node {target} already online & healthy"]
 
-    return system_tunnel_up(
+    prev_backend = saved.get("active_backend")
+    notes = system_tunnel_up(
         exit_node=target,
         warp_bootstrap=warp_bootstrap,
         fallback_warp=fallback_warp,
@@ -209,3 +211,19 @@ def system_tunnel_ensure(
         runner=runner,
         state_file=state_file,
     )
+    new_backend = _read_json_file(state_file).get("active_backend")
+    message = _backend_change_message(prev_backend, new_backend, target)
+    if message and _notify.notify("Senza tunnel", message, runner=runner):
+        notes.append(f"Notified: {message}")
+    return notes
+
+
+def _backend_change_message(prev: Any, new: Any, target: str) -> str | None:
+    """User-facing text for a backend switch, or None when nothing changed / first run."""
+    if not prev or prev == new:
+        return None
+    if new == "tailscale":
+        return f"Back on Tailscale exit node {target}"
+    if new == "warp":
+        return "Tailscale exit node unreachable. Switched to Cloudflare WARP"
+    return "Bypass tunnel is down. Retrying every 45 s"
