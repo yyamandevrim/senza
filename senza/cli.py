@@ -20,8 +20,8 @@ from .app_bridge import (
     prepare_patched_app,
     resolve_launched_pid,
 )
+from . import config as user_config
 from .firewall_bypass import (
-    DEFAULT_TAILSCALE_EXIT_NODE,
     FirewallBypass,
     install_tunnel_launch_agent,
     probe_psn_firewall,
@@ -115,7 +115,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         )
         print(f"  TS controlplane   : {cp_txt}")
         print(f"  TS DERP TCP-443   : {derp_txt}")
-        print(f"  Tailscale exit    : {fw.tailscale_exit_node} -> {fw.tailscale_exit_node_status}")
+        print(f"  Tailscale exit    : {fw.tailscale_exit_node or '(none configured)'} -> {fw.tailscale_exit_node_status}")
     tun_state = f"ACTIVE ({sys_tun['active_backend']})" if sys_tun["active"] else "off"
     svc_state = "installed (45s watchdog)" if sys_tun["service_installed"] else "not installed"
     print(f"  System tunnel     : {tun_state} | LaunchAgent: {svc_state}")
@@ -314,7 +314,7 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
             return 0
         print("=== System-Wide FortiGate / Tailscale Tunnel ===")
         print(f"  Active backend    : {st['active_backend'].upper()} ({'ACTIVE' if st['active'] else 'off'})")
-        print(f"  Target exit node  : {st['target_exit_node']}")
+        print(f"  Target exit node  : {st['target_exit_node'] or '(none — senza config set exit-node <ip>)'}")
         print(f"  Tailscale state   : {st['tailscale_state']}")
         print(f"  Exit node status  : {st['tailscale_exit_node_status']}")
         cp_ok = st.get("controlplane_ok")
@@ -371,6 +371,46 @@ def cmd_tunnel(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_config(args: argparse.Namespace) -> int:
+    """Read/write ~/.config/senza/config.json (exit node, network profiles, ...)."""
+    action = args.config_action
+    if action == "path":
+        print(user_config.config_path())
+        return 0
+    if action == "show":
+        cfg = user_config.load_config()
+        print(json.dumps(cfg, indent=2) if args.json or cfg else "{}")
+        return 0
+    if not args.key:
+        print("ERROR: missing KEY (e.g. `senza config set exit-node 100.64.0.10`)")
+        return 2
+    key = user_config.normalize_key(args.key)
+    if action == "get":
+        val = user_config.get_value(key)
+        if args.json:
+            print(json.dumps({"key": key, "value": val}))
+        elif val is not None:
+            print(val if not isinstance(val, (dict, list)) else json.dumps(val))
+        return 0 if val is not None else 1
+    if action == "set":
+        if args.value is None:
+            print("ERROR: missing VALUE")
+            return 2
+        value = user_config.parse_cli_value(args.value)
+        if key.endswith("exit_nodes") and isinstance(value, str):
+            value = [value]
+        if key == "tailscale.exit_node":
+            value = str(args.value).strip()
+        user_config.set_value(key, value)
+        print(json.dumps({"ok": True, "key": key, "value": value}) if args.json else f"{key} = {value}")
+        return 0
+    if action == "unset":
+        user_config.unset_value(key)
+        print(json.dumps({"ok": True, "key": key}) if args.json else f"unset {key}")
+        return 0
+    return 1
+
+
 def cmd_restore(args: argparse.Namespace) -> int:
     notes = restore_firewall_bypass(gui_sudo=args.gui_sudo)
     notes.extend(restore_from_crash(gui_sudo=args.gui_sudo))
@@ -398,8 +438,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_doc.add_argument("--host", default="1.1.1.1", help="Target host/IP for WAN ping & MTU check (default: 1.1.1.1)")
     p_doc.add_argument(
         "--exit-node",
-        default=DEFAULT_TAILSCALE_EXIT_NODE,
-        help=f"Tailscale exit node IP/hostname to check readiness for (default: {DEFAULT_TAILSCALE_EXIT_NODE})",
+        default=None,
+        help="Tailscale exit node IP/hostname to check (default: `senza config get exit-node`, else auto-discover)",
     )
     p_doc.add_argument("--chiaki-app", default=None, help="Custom path to chiaki-ng.app")
     p_doc.add_argument("--sony-app", default=None, help="Custom path to Sony RemotePlay.app")
@@ -436,7 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument(
         "--exit-node",
         default=None,
-        help=f"Tailscale exit node IP/hostname (default in tailscale mode: {DEFAULT_TAILSCALE_EXIT_NODE})",
+        help="Tailscale exit node IP/hostname (default: `senza config get exit-node`, else auto-discover)",
     )
     p_start.add_argument(
         "--warp-bootstrap",
@@ -469,7 +509,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_tun.add_argument(
         "--exit-node",
         default=None,
-        help=f"Tailscale exit node IP/hostname (default: {DEFAULT_TAILSCALE_EXIT_NODE})",
+        help="Tailscale exit node IP/hostname (default: `senza config get exit-node`, else auto-discover)",
     )
     p_tun.add_argument(
         "--warp-bootstrap",
@@ -485,6 +525,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_tun.add_argument("--dry-run", action="store_true", help="Show planned tunnel steps without modifying state")
     p_tun.add_argument("--json", action="store_true", help="Emit JSON output (for `status`)")
     p_tun.set_defaults(func=cmd_tunnel)
+
+    p_cfg = sub.add_parser("config", help="Get/set user config (~/.config/senza/config.json): exit-node, network profiles, ...")
+    p_cfg.add_argument("config_action", choices=["show", "get", "set", "unset", "path"])
+    p_cfg.add_argument("key", nargs="?", default=None, help="Dotted key or alias (exit-node, exit-nodes, probe-host)")
+    p_cfg.add_argument("value", nargs="?", default=None, help="Value for `set` (true/false, numbers and a,b,c lists parsed)")
+    p_cfg.add_argument("--json", action="store_true", help="Emit JSON output")
+    p_cfg.set_defaults(func=cmd_config)
 
     p_exp = sub.add_parser("export-profile", help="Validate JSON profile and write runtime_profile.cfg for live hot-reload")
     p_exp.add_argument("--profile", default="gta6", help="Profile name in profiles/ or path to JSON (default: gta6)")

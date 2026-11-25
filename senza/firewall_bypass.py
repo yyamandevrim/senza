@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .config import configured_exit_node
 from .state import atomic_write_json, read_json_dict, remove_file
 
 STATE_DIR = Path.home() / ".local" / "share" / "senza"
@@ -29,7 +30,10 @@ LAUNCH_AGENT_LABEL = "com.senza.fortigate-tailscale"
 LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 
 CLEAN_DNS_SERVERS: tuple[str, ...] = ("1.1.1.1", "1.0.0.1")
-DEFAULT_TAILSCALE_EXIT_NODE: str = "100.123.154.74"
+NO_EXIT_NODE_HINT = (
+    "No Tailscale exit node configured — run `senza config set exit-node <tailscale-ip-or-hostname>` "
+    "or pass --exit-node"
+)
 TAILSCALE_DERP_PROBE_HOSTS: tuple[str, ...] = (
     "derp9.tailscale.com",
     "derp1.tailscale.com",
@@ -204,14 +208,29 @@ def _tailscale_discover_exit_node(ts_cli: str, runner: Runner) -> str | None:
     if not data:
         return None
     nodes = _tailscale_list_exit_nodes(data)
-    if DEFAULT_TAILSCALE_EXIT_NODE in nodes:
-        return DEFAULT_TAILSCALE_EXIT_NODE
+    preferred = configured_exit_node()
+    if preferred and preferred in nodes:
+        return preferred
     return nodes[0] if nodes else None
+
+
+def resolve_exit_node(
+    explicit: str | None = None,
+    runner: Runner = _default_runner,
+    saved: str | None = None,
+    discover: bool = True,
+) -> str | None:
+    """explicit > $SENZA_EXIT_NODE > config file > saved tunnel state > first exit-node peer in tailnet."""
+    node = configured_exit_node(explicit) or ((saved or "").strip() or None)
+    if node or not discover:
+        return node
+    ts_cli = find_tailscale_cli(runner)
+    return _tailscale_discover_exit_node(ts_cli, runner) if ts_cli else None
 
 
 def inspect_tailscale_exit_node(
     ts_cli: str,
-    target: str = DEFAULT_TAILSCALE_EXIT_NODE,
+    target: str | None = None,
     runner: Runner = _default_runner,
 ) -> dict[str, Any]:
     """Return structured readiness status for Tailscale and a specific exit node."""
@@ -240,10 +259,16 @@ def inspect_tailscale_exit_node(
         info["status_text"] = "Tailscale needs login (open Tailscale app)"
         return info
     if state == "Stopped":
-        info["status_text"] = f"Tailscale stopped (will auto-start & use {target} on Launch)"
+        info["status_text"] = (
+            f"Tailscale stopped (will auto-start & use {target} on Launch)" if target else f"Tailscale stopped · {NO_EXIT_NODE_HINT}"
+        )
         return info
     if state != "Running":
         info["status_text"] = f"Tailscale state: {state}"
+        return info
+    if not target:
+        avail = info["available_exit_nodes"]
+        info["status_text"] = NO_EXIT_NODE_HINT + (f" (available: {', '.join(avail)})" if avail else "")
         return info
 
     peer = _tailscale_find_peer(data, target)
@@ -278,7 +303,7 @@ class FirewallProbeReport:
     tailscale_available: bool = False
     tailscale_running: bool = False
     tailscale_state: str = "not_installed"
-    tailscale_exit_node: str = DEFAULT_TAILSCALE_EXIT_NODE
+    tailscale_exit_node: str | None = None
     tailscale_exit_node_ready: bool = False
     tailscale_exit_node_status: str = ""
     tailscale_available_exit_nodes: list[str] = field(default_factory=list)
@@ -384,12 +409,15 @@ def probe_psn_firewall(
     exit_node: str | None = None,
 ) -> FirewallProbeReport:
     """Detect whether the current network blocks PSN, outbound UDP, or Tailscale controlplane/DERP (FortiGate)."""
-    target_exit = (exit_node or os.environ.get("SENZA_EXIT_NODE") or DEFAULT_TAILSCALE_EXIT_NODE).strip()
+    target_exit = configured_exit_node(exit_node)
     rep = FirewallProbeReport(tailscale_exit_node=target_exit)
     rep.warp_available = find_warp_cli() is not None
     ts_cli = find_tailscale_cli(runner)
     rep.tailscale_available = ts_cli is not None
     if ts_cli:
+        if not target_exit:
+            target_exit = _tailscale_discover_exit_node(ts_cli, runner)
+            rep.tailscale_exit_node = target_exit
         ts_info = inspect_tailscale_exit_node(ts_cli, target=target_exit, runner=runner)
         rep.tailscale_state = str(ts_info["backend_state"])
         rep.tailscale_running = rep.tailscale_state == "Running"
@@ -711,12 +739,13 @@ class FirewallBypass:
             notes.append("Tailscale CLI not found (`brew install --cask tailscale-app`).")
             return notes
 
-        target_node = (
-            self.exit_node
-            or (os.environ.get("SENZA_EXIT_NODE") or "").strip()
-            or _tailscale_discover_exit_node(ts, self.runner)
-            or DEFAULT_TAILSCALE_EXIT_NODE
-        )
+        target_node = configured_exit_node(self.exit_node) or _tailscale_discover_exit_node(ts, self.runner)
+        if not target_node:
+            notes.append(f"Warning: {NO_EXIT_NODE_HINT}.")
+            if self.fallback_warp and not self.dry_run:
+                notes.append("Fallback enabled — activating Cloudflare WARP MASQUE (TCP 443) instead")
+                notes.extend(self._connect_warp())
+            return notes
 
         if self.dry_run:
             data = _tailscale_status_json(ts, self.runner)
@@ -972,7 +1001,7 @@ class FirewallBypass:
                         notes.append(
                             "Notice: Clean DNS (1.1.1.1) applied, but this firewall ALSO blocks outbound UDP. "
                             "For full PS Remote Play tunnel bypass, install Cloudflare WARP (`brew install --cask cloudflare-warp`) "
-                            f"or enable Tailscale Exit Node (`--bypass-firewall tailscale --exit-node {DEFAULT_TAILSCALE_EXIT_NODE}`)."
+                            "or enable a Tailscale Exit Node (`senza config set exit-node <ip>` then `--bypass-firewall tailscale`)."
                         )
 
         if not self.dry_run and not self.persistent:
@@ -1163,12 +1192,7 @@ def system_tunnel_status(
 ) -> dict[str, Any]:
     """Inspect current system-wide FortiGate/Tailscale bypass tunnel & LaunchAgent status."""
     saved = _read_json_file(state_file)
-    target = (
-        (exit_node or "").strip()
-        or str(saved.get("target_exit_node") or "").strip()
-        or (os.environ.get("SENZA_EXIT_NODE") or "").strip()
-        or DEFAULT_TAILSCALE_EXIT_NODE
-    )
+    target = resolve_exit_node(exit_node, runner, saved=str(saved.get("target_exit_node") or ""))
 
     ts_cli = find_tailscale_cli(runner)
     ts_info = inspect_tailscale_exit_node(ts_cli, target=target, runner=runner) if ts_cli else {
@@ -1225,12 +1249,9 @@ def system_tunnel_up(
 ) -> list[str]:
     """Activate persistent system-wide Tailscale exit-node bypass (with FortiGate WARP bootstrap & fallback)."""
     prev_saved = _read_json_file(state_file)
-    target = (
-        (exit_node or "").strip()
-        or str(prev_saved.get("target_exit_node") or "").strip()
-        or (os.environ.get("SENZA_EXIT_NODE") or "").strip()
-        or DEFAULT_TAILSCALE_EXIT_NODE
-    )
+    target = resolve_exit_node(exit_node, runner, saved=str(prev_saved.get("target_exit_node") or ""))
+    if not target:
+        return [f"Warning: {NO_EXIT_NODE_HINT}."]
 
     fb = FirewallBypass(
         mode="tailscale",
@@ -1327,12 +1348,9 @@ def system_tunnel_ensure(
 ) -> list[str]:
     """Idempotent health-check & auto-heal (designed for the macOS LaunchAgent watchdog)."""
     saved = _read_json_file(state_file)
-    target = (
-        (exit_node or "").strip()
-        or str(saved.get("target_exit_node") or "").strip()
-        or (os.environ.get("SENZA_EXIT_NODE") or "").strip()
-        or DEFAULT_TAILSCALE_EXIT_NODE
-    )
+    target = resolve_exit_node(exit_node, runner, saved=str(saved.get("target_exit_node") or ""))
+    if not target:
+        return [f"Warning: {NO_EXIT_NODE_HINT}."]
 
     ts_cli = find_tailscale_cli(runner)
     if ts_cli:
@@ -1364,10 +1382,14 @@ def install_tunnel_launch_agent(
     cli_path: str | None = None,
 ) -> list[str]:
     """Install a macOS LaunchAgent that keeps the FortiGate -> Tailscale exit-node bypass alive system-wide."""
-    target = (exit_node or os.environ.get("SENZA_EXIT_NODE") or DEFAULT_TAILSCALE_EXIT_NODE).strip()
+    # Only pin --exit-node when given explicitly; otherwise `tunnel ensure` re-reads
+    # ~/.config/senza/config.json on every run, so `senza config set exit-node` takes effect live.
+    target = (exit_node or "").strip() or None
     senza_cli = cli_path or _resolve_senza_cli_path()
 
-    prog_args = [senza_cli, "tunnel", "ensure", "--exit-node", target]
+    prog_args = [senza_cli, "tunnel", "ensure"]
+    if target:
+        prog_args += ["--exit-node", target]
     if not fallback_warp:
         prog_args.append("--no-fallback-warp")
 
@@ -1393,7 +1415,8 @@ def install_tunnel_launch_agent(
     runner(["launchctl", "bootout", domain, str(plist_path)])
     res = runner(["launchctl", "bootstrap", domain, str(plist_path)])
 
-    notes = [f"Installed macOS LaunchAgent: {plist_path} (target={target}, interval=45s)"]
+    shown = target or "from ~/.config/senza/config.json"
+    notes = [f"Installed macOS LaunchAgent: {plist_path} (target={shown}, interval=45s)"]
     if res.returncode == 0:
         notes.append(f"LaunchAgent '{LAUNCH_AGENT_LABEL}' loaded and active")
     else:

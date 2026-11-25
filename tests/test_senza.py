@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+# Isolate every test from the developer's real ~/.config/senza/config.json and environment.
+_TEST_CFG_DIR = tempfile.mkdtemp(prefix="senza-test-cfg-")
 
 from senza.net_probe import NetworkReport, parse_ping_output
 from senza.profiles import export_runtime_config, load_profile
@@ -14,6 +18,13 @@ from senza.sys_optimizer import SystemOptimizer
 
 
 class TestSenza(unittest.TestCase):
+    def setUp(self) -> None:
+        os.environ["SENZA_CONFIG"] = str(Path(_TEST_CFG_DIR) / "config.json")
+        os.environ.pop("SENZA_EXIT_NODE", None)
+        Path(os.environ["SENZA_CONFIG"]).write_text(
+            '{"tailscale": {"exit_node": "100.101.102.103"}}', encoding="utf-8"
+        )
+
     def test_parse_ping_and_recommend_presets(self) -> None:
         sample = "\n".join(
             [
@@ -166,9 +177,10 @@ class TestSenza(unittest.TestCase):
     def test_firewall_bypass_tailscale_auto_up_exit_node_ping_and_rollback(self) -> None:
         import json
         from unittest.mock import patch
-        from senza.firewall_bypass import DEFAULT_TAILSCALE_EXIT_NODE, FirewallBypass
+        from senza.config import configured_exit_node
+        from senza.firewall_bypass import FirewallBypass
 
-        self.assertEqual(DEFAULT_TAILSCALE_EXIT_NODE, "100.123.154.74")
+        self.assertEqual(configured_exit_node(), "100.101.102.103")  # from isolated test config
 
         calls: list[list[str]] = []
         ts_bin = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
@@ -183,7 +195,7 @@ class TestSenza(unittest.TestCase):
                         "nodekey:exit1": {
                             "HostName": "home-exit",
                             "DNSName": "home-exit.tailnet.ts.net.",
-                            "TailscaleIPs": ["100.123.154.74"],
+                            "TailscaleIPs": ["100.101.102.103"],
                             "Online": True,
                             "ExitNodeOption": True,
                             "ExitNode": ts_state["exit_active"],
@@ -191,21 +203,21 @@ class TestSenza(unittest.TestCase):
                     }
                     if ts_state["exit_active"]:
                         payload["ExitNodeStatus"] = {
-                            "TailscaleIPs": ["100.123.154.74/32"],
+                            "TailscaleIPs": ["100.101.102.103/32"],
                             "Online": True,
                         }
                 return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
             if cmd == [ts_bin, "up"]:
                 ts_state["backend"] = "Running"
                 return subprocess.CompletedProcess(cmd, 0, "", "")
-            if cmd == [ts_bin, "set", "--exit-node=100.123.154.74", "--exit-node-allow-lan-access=true"]:
+            if cmd == [ts_bin, "set", "--exit-node=100.101.102.103", "--exit-node-allow-lan-access=true"]:
                 ts_state["exit_active"] = True
                 return subprocess.CompletedProcess(cmd, 0, "", "")
-            if cmd == [ts_bin, "ping", "-c", "1", "--timeout=3s", "100.123.154.74"]:
+            if cmd == [ts_bin, "ping", "-c", "1", "--timeout=3s", "100.101.102.103"]:
                 return subprocess.CompletedProcess(
                     cmd,
                     0,
-                    "pong from home-exit (100.123.154.74) via DERP(fra) in 38ms\n",
+                    "pong from home-exit (100.101.102.103) via DERP(fra) in 38ms\n",
                     "",
                 )
             if cmd == [ts_bin, "set", "--exit-node="]:
@@ -231,7 +243,7 @@ class TestSenza(unittest.TestCase):
                 self.assertFalse(any("networksetup" in " ".join(c) for c in calls))
                 self.assertIn([ts_bin, "up"], calls)
                 self.assertIn(
-                    [ts_bin, "set", "--exit-node=100.123.154.74", "--exit-node-allow-lan-access=true"],
+                    [ts_bin, "set", "--exit-node=100.101.102.103", "--exit-node-allow-lan-access=true"],
                     calls,
                 )
                 self.assertTrue(any("DERP(fra) TCP-443 relay · 38ms" in n for n in enter_notes))
@@ -271,7 +283,7 @@ class TestSenza(unittest.TestCase):
             ):
                 fb = FirewallBypass(mode="tailscale", dry_run=False, runner=fake_runner, state_file=state_file)
                 notes = fb.enter()
-                self.assertTrue(any("100.123.154.74" in n and "waiting for share/ACL access" in n for n in notes))
+                self.assertTrue(any("100.101.102.103" in n and "waiting for share/ACL access" in n for n in notes))
                 self.assertFalse(any("set" in c for c in calls))
                 fb.exit()
 
@@ -296,7 +308,7 @@ class TestSenza(unittest.TestCase):
                             "Peer": {
                                 "k1": {
                                     "HostName": "vps-exit",
-                                    "TailscaleIPs": ["100.123.154.74"],
+                                    "TailscaleIPs": ["100.101.102.103"],
                                     "Online": True,
                                     "ExitNodeOption": True,
                                 }
@@ -310,7 +322,7 @@ class TestSenza(unittest.TestCase):
         with patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=[dead_cli, live_cli]):
             self.assertEqual(find_tailscale_cli(fake_runner), live_cli)
 
-        info = inspect_tailscale_exit_node(live_cli, target="100.123.154.74", runner=fake_runner)
+        info = inspect_tailscale_exit_node(live_cli, target="100.101.102.103", runner=fake_runner)
         self.assertTrue(info["ready"])
         self.assertIn("ONLINE & READY", str(info["status_text"]))
 
@@ -351,7 +363,7 @@ class TestSenza(unittest.TestCase):
                     payload["Peer"] = {
                         "k1": {
                             "HostName": "home-exit",
-                            "TailscaleIPs": ["100.123.154.74"],
+                            "TailscaleIPs": ["100.101.102.103"],
                             "Online": True,
                             "ExitNodeOption": True,
                             "ExitNode": state["exit"],
@@ -359,21 +371,21 @@ class TestSenza(unittest.TestCase):
                     }
                     if state["exit"]:
                         payload["ExitNodeStatus"] = {
-                            "TailscaleIPs": ["100.123.154.74/32"],
+                            "TailscaleIPs": ["100.101.102.103/32"],
                             "Online": True,
                         }
                 return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
             if cmd == [ts_bin, "up"]:
                 state["ts"] = "Running"
                 return subprocess.CompletedProcess(cmd, 0, "", "")
-            if cmd == [ts_bin, "set", "--exit-node=100.123.154.74", "--exit-node-allow-lan-access=true"]:
+            if cmd == [ts_bin, "set", "--exit-node=100.101.102.103", "--exit-node-allow-lan-access=true"]:
                 state["exit"] = True
                 return subprocess.CompletedProcess(cmd, 0, "", "")
-            if cmd == [ts_bin, "ping", "-c", "1", "--timeout=3s", "100.123.154.74"]:
+            if cmd == [ts_bin, "ping", "-c", "1", "--timeout=3s", "100.101.102.103"]:
                 return subprocess.CompletedProcess(
                     cmd,
                     0,
-                    "pong from home-exit (100.123.154.74) via DERP(lon) in 29ms\n",
+                    "pong from home-exit (100.101.102.103) via DERP(lon) in 29ms\n",
                     "",
                 )
             if cmd == [ts_bin, "set", "--exit-node="]:
@@ -397,7 +409,7 @@ class TestSenza(unittest.TestCase):
                 patch("senza.firewall_bypass.time.sleep", return_value=None),
             ):
                 up_notes = system_tunnel_up(
-                    exit_node="100.123.154.74",
+                    exit_node="100.101.102.103",
                     warp_bootstrap="auto",
                     fallback_warp=True,
                     runner=fake_runner,
@@ -408,7 +420,7 @@ class TestSenza(unittest.TestCase):
                 idx_wc = calls.index([warp_bin, "connect"])
                 idx_tu = calls.index([ts_bin, "up"])
                 idx_wd = calls.index([warp_bin, "disconnect"])
-                idx_ex = calls.index([ts_bin, "set", "--exit-node=100.123.154.74", "--exit-node-allow-lan-access=true"])
+                idx_ex = calls.index([ts_bin, "set", "--exit-node=100.101.102.103", "--exit-node-allow-lan-access=true"])
                 self.assertLess(idx_wc, idx_tu)
                 self.assertLess(idx_tu, idx_wd)
                 self.assertLess(idx_wd, idx_ex)
@@ -427,7 +439,7 @@ class TestSenza(unittest.TestCase):
 
                 # LaunchAgent install & uninstall
                 install_tunnel_launch_agent(
-                    exit_node="100.123.154.74",
+                    exit_node="100.101.102.103",
                     runner=fake_runner,
                     plist_path=plist_file,
                     cli_path="/Users/test/.local/bin/senza",
@@ -435,7 +447,7 @@ class TestSenza(unittest.TestCase):
                 self.assertTrue(plist_file.exists())
                 plist_obj = plistlib.loads(plist_file.read_bytes())
                 self.assertEqual(plist_obj["StartInterval"], 45)
-                self.assertIn("100.123.154.74", plist_obj["ProgramArguments"])
+                self.assertIn("100.101.102.103", plist_obj["ProgramArguments"])
 
                 uninstall_tunnel_launch_agent(runner=fake_runner, plist_path=plist_file)
                 self.assertFalse(plist_file.exists())

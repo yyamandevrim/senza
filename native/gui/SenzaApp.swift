@@ -91,7 +91,7 @@ struct DoctorResponse: Decodable {
     struct SystemTunnel: Decodable {
         let active: Bool
         let active_backend: String
-        let target_exit_node: String
+        let target_exit_node: String?
         let service_installed: Bool
     }
     struct Preset: Decodable {
@@ -157,7 +157,6 @@ struct SenzaCLI {
 @MainActor
 final class SenzaController: ObservableObject {
     static let shared = SenzaController()
-    static let defaultTailscaleExitNode = "100.123.154.74"
 
     @Published var inputMode: InputMode {
         didSet { UserDefaults.standard.set(inputMode.rawValue, forKey: "senza.inputMode") }
@@ -175,7 +174,10 @@ final class SenzaController: ObservableObject {
         didSet { UserDefaults.standard.set(firewall.rawValue, forKey: "senza.firewall") }
     }
     @Published var tailscaleExitNode: String {
-        didSet { UserDefaults.standard.set(tailscaleExitNode, forKey: "senza.exitNode") }
+        didSet {
+            UserDefaults.standard.set(tailscaleExitNode, forKey: "senza.exitNode")
+            scheduleExitNodeConfigWrite()
+        }
     }
     @Published var probeHost: String {
         didSet { UserDefaults.standard.set(probeHost, forKey: "senza.host") }
@@ -210,14 +212,79 @@ final class SenzaController: ObservableObject {
         self.privileged = ud.object(forKey: "senza.privileged") == nil ? true : ud.bool(forKey: "senza.privileged")
         self.firewall = FirewallMode(rawValue: ud.string(forKey: "senza.firewall") ?? "") ?? .off
         let savedExit = ud.string(forKey: "senza.exitNode")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.tailscaleExitNode = savedExit.isEmpty ? Self.defaultTailscaleExitNode : savedExit
+        self.tailscaleExitNode = savedExit
         self.probeHost = ud.string(forKey: "senza.host") ?? "1.1.1.1"
         setupControllerObservers()
+        syncExitNodeWithConfig(localValue: savedExit)
     }
 
+    /// Exit node typed in the GUI; empty means "use ~/.config/senza/config.json or auto-discover".
     var resolvedExitNode: String {
-        let trimmed = tailscaleExitNode.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? Self.defaultTailscaleExitNode : trimmed
+        tailscaleExitNode.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Human label for status text when no node is typed.
+    var exitNodeLabel: String {
+        resolvedExitNode.isEmpty ? (doctor?.system_tunnel?.target_exit_node ?? "auto") : resolvedExitNode
+    }
+
+    /// CLI args that pin the exit node only when the user typed one.
+    var exitNodeArgs: [String] {
+        resolvedExitNode.isEmpty ? [] : ["--exit-node", resolvedExitNode]
+    }
+
+    private var exitNodeWriteItem: DispatchWorkItem?
+    private var suppressExitNodeWrite = false
+
+    /// `~/.config/senza/config.json` is the single source of truth shared with CLI, Raycast and the LaunchAgent.
+    /// On first run adopt the config value; if only the GUI has one (older versions), migrate it into config.
+    private func syncExitNodeWithConfig(localValue: String) {
+        guard let cli = SenzaCLI.resolve() else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let out = Self.runCLISync(cli, ["config", "get", "exit-node"])
+            let configValue = out.status == 0 ? out.output.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if !configValue.isEmpty, configValue != localValue {
+                    self.suppressExitNodeWrite = true
+                    self.tailscaleExitNode = configValue
+                    self.suppressExitNodeWrite = false
+                } else if configValue.isEmpty, !localValue.isEmpty {
+                    self.scheduleExitNodeConfigWrite(delay: 0)
+                }
+            }
+        }
+    }
+
+    private func scheduleExitNodeConfigWrite(delay: TimeInterval = 0.8) {
+        guard !suppressExitNodeWrite, let cli = SenzaCLI.resolve() else { return }
+        exitNodeWriteItem?.cancel()
+        let value = resolvedExitNode
+        let item = DispatchWorkItem {
+            _ = Self.runCLISync(cli, value.isEmpty ? ["config", "unset", "exit-node"] : ["config", "set", "exit-node", value])
+        }
+        exitNodeWriteItem = item
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    /// Run the Senza CLI synchronously (call off the main thread). Returns exit status + combined output.
+    nonisolated static func runCLISync(_ cli: (executable: URL, workingDir: URL), _ args: [String]) -> (status: Int32, output: String) {
+        let proc = Process()
+        proc.executableURL = cli.executable
+        proc.currentDirectoryURL = cli.workingDir
+        proc.arguments = args
+        proc.environment = baseEnv()
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do {
+            try proc.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            return (proc.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+        } catch {
+            return (-1, error.localizedDescription)
+        }
     }
 
     func selectInputMode(_ mode: InputMode) {
@@ -290,13 +357,13 @@ final class SenzaController: ObservableObject {
         }
         doctorLoading = true
         let host = probeHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "1.1.1.1" : probeHost
-        let exitNode = resolvedExitNode
+        let exitArgs = exitNodeArgs
 
         DispatchQueue.global(qos: .userInitiated).async {
             let proc = Process()
             proc.executableURL = cli.executable
             proc.currentDirectoryURL = cli.workingDir
-            proc.arguments = ["doctor", "--host", host, "--exit-node", exitNode, "--json"]
+            proc.arguments = ["doctor", "--host", host] + exitArgs + ["--json"]
             proc.environment = Self.baseEnv()
 
             let outPipe = Pipe()
@@ -360,7 +427,7 @@ final class SenzaController: ObservableObject {
         if firewall != .off {
             args += ["--bypass-firewall", firewall.rawValue]
             if firewall == .tailscale {
-                args += ["--exit-node", resolvedExitNode]
+                args += exitNodeArgs
             }
         }
 
@@ -386,7 +453,7 @@ final class SenzaController: ObservableObject {
 
         let launchStatus: String = {
             if privileged { return "Authorizing Wi-Fi & UDP boost…" }
-            if firewall == .tailscale { return "Connecting Tailscale exit node \(resolvedExitNode)…" }
+            if firewall == .tailscale { return "Connecting Tailscale exit node \(exitNodeLabel)…" }
             return "Launching \(client.displayName)…"
         }()
         setPhase(.launching(launchStatus))
@@ -598,11 +665,11 @@ final class SenzaController: ObservableObject {
             return
         }
         let isActive = doctor?.system_tunnel?.active == true
-        let exitNode = resolvedExitNode
+        let exitArgs = exitNodeArgs
         tunnelBusy = true
         statusNote = isActive
             ? "Stopping system-wide tunnel…"
-            : "Enabling system-wide tunnel (\(exitNode))…"
+            : "Enabling system-wide tunnel (\(exitNodeLabel))…"
 
         DispatchQueue.global(qos: .userInitiated).async {
             let proc = Process()
@@ -610,7 +677,7 @@ final class SenzaController: ObservableObject {
             proc.currentDirectoryURL = cli.workingDir
             proc.arguments = isActive
                 ? ["tunnel", "off"]
-                : ["tunnel", "on", "--exit-node", exitNode]
+                : ["tunnel", "on"] + exitArgs
             proc.environment = Self.baseEnv()
             let pipe = Pipe()
             proc.standardOutput = pipe
@@ -646,7 +713,6 @@ final class SenzaController: ObservableObject {
         guard !tunnelBusy else { return }
         guard let cli = SenzaCLI.resolve() else { return }
         let installed = doctor?.system_tunnel?.service_installed == true
-        let exitNode = resolvedExitNode
         tunnelBusy = true
         statusNote = installed
             ? "Removing auto-heal LaunchAgent…"
@@ -658,7 +724,7 @@ final class SenzaController: ObservableObject {
             proc.currentDirectoryURL = cli.workingDir
             proc.arguments = installed
                 ? ["tunnel", "uninstall-service"]
-                : ["tunnel", "install-service", "--exit-node", exitNode]
+                : ["tunnel", "install-service"]  // agent reads ~/.config/senza/config.json each run
             proc.environment = Self.baseEnv()
             let pipe = Pipe()
             proc.standardOutput = pipe
@@ -985,7 +1051,7 @@ struct SenzaRootView: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.white.opacity(0.82))
                         Spacer()
-                        TextField("100.123.154.74", text: $ctrl.tailscaleExitNode)
+                        TextField("auto (tailnet)", text: $ctrl.tailscaleExitNode)
                             .textFieldStyle(.plain)
                             .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                             .foregroundStyle(.white)
@@ -1059,12 +1125,12 @@ struct SenzaRootView: View {
 
     private var tailscaleStatusText: String {
         guard let fw = ctrl.doctor?.firewall else {
-            return "Checking Tailscale exit node \(ctrl.resolvedExitNode)…"
+            return "Checking Tailscale exit node \(ctrl.exitNodeLabel)…"
         }
         if let st = fw.tailscale_exit_node_status, !st.isEmpty {
             return st
         }
-        return "Target: \(ctrl.resolvedExitNode) · auto-starts Tailscale on Launch"
+        return "Target: \(ctrl.exitNodeLabel) · auto-starts Tailscale on Launch"
     }
 
     private func errorBanner(_ message: String) -> some View {
@@ -2523,7 +2589,7 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         let backendLabel = (sysTun?.active_backend ?? "").uppercased()
         let tunnelTitle = tunActive
             ? "● System-Wide Bypass (\(backendLabel)) — Turn Off"
-            : "Enable System-Wide Bypass (\(ctrl.resolvedExitNode))"
+            : "Enable System-Wide Bypass (\(ctrl.exitNodeLabel))"
         let tunnelItem = NSMenuItem(title: tunnelTitle, action: #selector(menuToggleSystemTunnel), keyEquivalent: "t")
         tunnelItem.target = self
         menu.addItem(tunnelItem)

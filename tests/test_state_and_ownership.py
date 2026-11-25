@@ -12,8 +12,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from senza.state import atomic_write_json, read_json_dict
-from senza.sys_optimizer import SystemOptimizer, build_root_p2p_watchdog
+os.environ["SENZA_CONFIG"] = str(Path(tempfile.mkdtemp(prefix="senza-test-cfg-")) / "config.json")
+os.environ.pop("SENZA_EXIT_NODE", None)
+
+from senza.state import atomic_write_json, read_json_dict  # noqa: E402
+from senza.sys_optimizer import SystemOptimizer, build_root_p2p_watchdog  # noqa: E402
 
 
 def _ok(cmd: list[str], out: str = "") -> subprocess.CompletedProcess[str]:
@@ -242,6 +245,69 @@ class TestSessionVsSystemTunnelOwnership(unittest.TestCase):
             self.assertEqual(calls, [])
             self.assertFalse(session_state.exists())
             self.assertTrue(any("owned by system-wide tunnel" in n for n in notes))
+
+
+class TestUserConfig(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self._old = os.environ.get("SENZA_CONFIG")
+        os.environ["SENZA_CONFIG"] = str(Path(self._tmp.name) / "cfg" / "config.json")
+
+    def tearDown(self) -> None:
+        if self._old is not None:
+            os.environ["SENZA_CONFIG"] = self._old
+        self._tmp.cleanup()
+
+    def test_no_exit_node_by_default(self) -> None:
+        from senza.config import configured_exit_node
+
+        self.assertIsNone(configured_exit_node())
+
+    def test_set_get_unset_and_precedence(self) -> None:
+        from senza import config
+
+        config.set_value("exit-node", "100.64.0.10")
+        config.set_value("exit-nodes", ["100.64.0.11", "100.64.0.10"])
+        self.assertEqual(config.get_value("tailscale.exit_node"), "100.64.0.10")
+        self.assertEqual(config.configured_exit_node(), "100.64.0.10")
+        self.assertEqual(config.configured_exit_node("explicit-host"), "explicit-host")
+        self.assertEqual(config.configured_exit_nodes(), ["100.64.0.10", "100.64.0.11"])
+        with mock.patch.dict(os.environ, {"SENZA_EXIT_NODE": "100.64.0.99"}):
+            self.assertEqual(config.configured_exit_node(), "100.64.0.99")
+        config.unset_value("exit-node")
+        self.assertIsNone(config.configured_exit_node())
+
+    def test_cli_config_roundtrip(self) -> None:
+        from senza.cli import main
+
+        self.assertEqual(main(["config", "set", "exit-node", "100.64.0.42"]), 0)
+        self.assertEqual(json.loads(Path(os.environ["SENZA_CONFIG"]).read_text())["tailscale"]["exit_node"], "100.64.0.42")
+        self.assertEqual(main(["config", "unset", "exit-node"]), 0)
+        self.assertEqual(main(["config", "get", "exit-node"]), 1)
+
+    def test_launch_agent_reads_config_when_no_explicit_node(self) -> None:
+        import plistlib
+
+        from senza.firewall_bypass import install_tunnel_launch_agent
+
+        plist = Path(self._tmp.name) / "agent.plist"
+        with mock.patch("senza.firewall_bypass.TUNNEL_WATCHDOG_LOG", Path(self._tmp.name) / "log"):
+            install_tunnel_launch_agent(runner=_ok, plist_path=plist, cli_path="/x/senza")
+        args = plistlib.loads(plist.read_bytes())["ProgramArguments"]
+        self.assertEqual(args, ["/x/senza", "tunnel", "ensure"])
+
+    def test_tailscale_mode_without_exit_node_warns(self) -> None:
+        from senza.firewall_bypass import FirewallBypass
+
+        def runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+            if cmd[-2:] == ["status", "--json"]:
+                return _ok(cmd, json.dumps({"BackendState": "Running", "Peer": {}}))
+            return _ok(cmd)
+
+        with mock.patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=["/ts"]):
+            fb = FirewallBypass(mode="tailscale", runner=runner, state_file=Path(self._tmp.name) / "s.json")
+            notes = fb.enter()
+        self.assertTrue(any("No Tailscale exit node configured" in n for n in notes))
 
 
 if __name__ == "__main__":

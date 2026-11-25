@@ -104,6 +104,20 @@ senza doctor
 senza restore --plist
 ```
 
+### Tailscale exit node & system-wide tunnel
+
+Your exit node lives in `~/.config/senza/config.json`, not in the repo. Senza.app, Raycast, the CLI and the
+LaunchAgent all read it from there:
+
+```bash
+senza config set exit-node 100.x.y.z     # your Tailscale exit node IP or MagicDNS name
+senza config show                        # print the whole config
+senza tunnel on                          # route the whole Mac through it (WARP bootstrap if blocked)
+senza tunnel install-service             # 45 s auto-heal LaunchAgent (re-reads config every run)
+```
+
+Resolution order: `--exit-node` flag › `$SENZA_EXIT_NODE` › config file › first exit-node peer in your tailnet.
+
 ---
 
 ## Raycast Extension
