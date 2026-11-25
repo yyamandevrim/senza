@@ -12,48 +12,36 @@ CFLAGS := -O2 -Wall -Wextra -std=c11 -I$(NATIVE_DIR)
 OBJCFLAGS := -O2 -Wall -Wextra -fobjc-arc -I$(NATIVE_DIR)
 FRAMEWORKS := -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices -framework Cocoa -framework QuartzCore -framework GameController -framework CoreHaptics
 SONY_FRAMEWORKS := $(FRAMEWORKS) -framework IOKit
+OBJ_DIR := $(BUILD_DIR)/obj
 
-.PHONY: all build app install install-app uninstall test test-c test-py clean
+# Shared by both bridges: mapper + config + Cocoa capture / HUD modules (compiled once).
+COMMON_C := mapper_core.c config_loader.c
+COMMON_M := macos_capture.m hud.m net_telemetry.m phys_controller.m window_watch.m
+COMMON_OBJS := $(addprefix $(OBJ_DIR)/,$(COMMON_C:.c=.o) $(COMMON_M:.m=.o))
+NATIVE_HEADERS := $(wildcard $(NATIVE_DIR)/*.h)
+
+.PHONY: all build app install install-app uninstall test test-c test-py test-sanitize lint clean
 
 all: build
 
 build: $(CHIAKI_DYLIB) $(SONY_DYLIB)
 
-$(CHIAKI_DYLIB): \
-	$(NATIVE_DIR)/mapper_core.c \
-	$(NATIVE_DIR)/config_loader.c \
-	$(NATIVE_DIR)/macos_capture.m \
-	$(NATIVE_DIR)/sdl_virtual_pad.c
-	mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -fPIC -c $(NATIVE_DIR)/mapper_core.c -o $(BUILD_DIR)/mapper_core.o
-	$(CC) $(CFLAGS) -fPIC -c $(NATIVE_DIR)/config_loader.c -o $(BUILD_DIR)/config_loader.o
-	$(CC) $(OBJCFLAGS) -fPIC -c $(NATIVE_DIR)/macos_capture.m -o $(BUILD_DIR)/macos_capture.o
-	$(CC) $(CFLAGS) -fPIC -c $(NATIVE_DIR)/sdl_virtual_pad.c -o $(BUILD_DIR)/sdl_virtual_pad.o
-	$(CC) -dynamiclib -Wl,-undefined,dynamic_lookup \
-		$(BUILD_DIR)/mapper_core.o \
-		$(BUILD_DIR)/config_loader.o \
-		$(BUILD_DIR)/macos_capture.o \
-		$(BUILD_DIR)/sdl_virtual_pad.o \
-		-o $(CHIAKI_DYLIB) $(FRAMEWORKS) -lm
-	codesign --force --sign - $(CHIAKI_DYLIB)
+$(OBJ_DIR):
+	mkdir -p $@
 
-$(SONY_DYLIB): \
-	$(NATIVE_DIR)/mapper_core.c \
-	$(NATIVE_DIR)/config_loader.c \
-	$(NATIVE_DIR)/macos_capture.m \
-	$(NATIVE_DIR)/iokit_dualsense_pad.c
-	mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -fPIC -c $(NATIVE_DIR)/mapper_core.c -o $(BUILD_DIR)/mapper_core.o
-	$(CC) $(CFLAGS) -fPIC -c $(NATIVE_DIR)/config_loader.c -o $(BUILD_DIR)/config_loader.o
-	$(CC) $(OBJCFLAGS) -fPIC -c $(NATIVE_DIR)/macos_capture.m -o $(BUILD_DIR)/macos_capture.o
-	$(CC) $(CFLAGS) -fPIC -c $(NATIVE_DIR)/iokit_dualsense_pad.c -o $(BUILD_DIR)/iokit_dualsense_pad.o
-	$(CC) -dynamiclib -Wl,-undefined,dynamic_lookup \
-		$(BUILD_DIR)/mapper_core.o \
-		$(BUILD_DIR)/config_loader.o \
-		$(BUILD_DIR)/macos_capture.o \
-		$(BUILD_DIR)/iokit_dualsense_pad.o \
-		-o $(SONY_DYLIB) $(SONY_FRAMEWORKS) -lm
-	codesign --force --sign - $(SONY_DYLIB)
+$(OBJ_DIR)/%.o: $(NATIVE_DIR)/%.c $(NATIVE_HEADERS) | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -fPIC -c $< -o $@
+
+$(OBJ_DIR)/%.o: $(NATIVE_DIR)/%.m $(NATIVE_HEADERS) | $(OBJ_DIR)
+	$(CC) $(OBJCFLAGS) -fPIC -c $< -o $@
+
+$(CHIAKI_DYLIB): $(COMMON_OBJS) $(OBJ_DIR)/sdl_virtual_pad.o
+	$(CC) -dynamiclib -Wl,-undefined,dynamic_lookup $^ -o $@ $(FRAMEWORKS) -lm
+	codesign --force --sign - $@
+
+$(SONY_DYLIB): $(COMMON_OBJS) $(OBJ_DIR)/iokit_dualsense_pad.o
+	$(CC) -dynamiclib -Wl,-undefined,dynamic_lookup $^ -o $@ $(SONY_FRAMEWORKS) -lm
+	codesign --force --sign - $@
 
 app: build
 	bash scripts/build_app.sh "$(APP_BUNDLE)"

@@ -68,12 +68,20 @@ def find_app_binary(app_bundle: Path, client: str = "chiaki") -> Path:
 
 
 def ensure_dylib_built(client: str = "chiaki", force: bool = False) -> Path:
+    """Incremental `make build` every time (a no-op when up to date) so edited sources never ship stale."""
     target = BUILD_SONY_DYLIB if client == "sony" else BUILD_CHIAKI_DYLIB
-    if target.is_file() and not force:
-        return target
-    res = subprocess.run(["make", "build"], cwd=str(REPO_ROOT), check=False)
+    if force:
+        for stale in (BUILD_SONY_DYLIB, BUILD_CHIAKI_DYLIB):
+            stale.unlink(missing_ok=True)
+    if shutil.which("make") is None or not (REPO_ROOT / "Makefile").is_file():
+        if target.is_file():
+            return target
+        raise RuntimeError(f"{target} missing and `make` unavailable (install Xcode Command Line Tools).")
+    res = subprocess.run(["make", "-s", "build"], cwd=str(REPO_ROOT), check=False, capture_output=True, text=True)
     if res.returncode != 0 or not target.is_file():
-        raise RuntimeError(f"Failed to compile {target} via `make build`.")
+        if target.is_file() and not force:
+            return target  # keep playing with the last good build
+        raise RuntimeError(f"Failed to compile {target} via `make build`:\n{res.stderr.strip()}")
     return target
 
 
