@@ -62,7 +62,7 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
     private func setupMainWindow() {
         let hosting = NSHostingController(rootView: SenzaRootView(ctrl: ctrl))
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 486, height: 648),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -107,7 +107,7 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
         switch ctrl.phase {
         case .playing(_, let label):
-            let statusHeader = NSMenuItem(title: "● Active — \(label)", action: nil, keyEquivalent: "")
+            let statusHeader = NSMenuItem(title: "Playing on \(label)", action: nil, keyEquivalent: "")
             statusHeader.isEnabled = false
             menu.addItem(statusHeader)
             menu.addItem(.separator())
@@ -116,7 +116,7 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             focusItem.target = self
             menu.addItem(focusItem)
 
-            let studioItem = NSMenuItem(title: "GTA 6 Tuning & Keybind Studio…", action: #selector(menuShowStudio), keyEquivalent: ",")
+            let studioItem = NSMenuItem(title: "Sensitivity and Keys…", action: #selector(menuShowStudio), keyEquivalent: ",")
             studioItem.target = self
             menu.addItem(studioItem)
 
@@ -124,13 +124,13 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             showItem.target = self
             menu.addItem(showItem)
 
-            let controlsItem = NSMenuItem(title: "GTA 6 Controls Cheat Sheet", action: #selector(menuShowControls), keyEquivalent: "")
+            let controlsItem = NSMenuItem(title: "Controls…", action: #selector(menuShowControls), keyEquivalent: "")
             controlsItem.target = self
             menu.addItem(controlsItem)
 
             menu.addItem(.separator())
 
-            let endItem = NSMenuItem(title: "End Session & Restore System", action: #selector(menuEndSession), keyEquivalent: "")
+            let endItem = NSMenuItem(title: "End Session", action: #selector(menuEndSession), keyEquivalent: "")
             endItem.target = self
             menu.addItem(endItem)
 
@@ -148,7 +148,7 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             launchItem.target = self
             menu.addItem(launchItem)
 
-            let studioItem = NSMenuItem(title: "GTA 6 Tuning & Keybind Studio…", action: #selector(menuShowStudio), keyEquivalent: ",")
+            let studioItem = NSMenuItem(title: "Sensitivity and Keys…", action: #selector(menuShowStudio), keyEquivalent: ",")
             studioItem.target = self
             menu.addItem(studioItem)
 
@@ -156,7 +156,7 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             showItem.target = self
             menu.addItem(showItem)
 
-            let restoreItem = NSMenuItem(title: "Restore System (AWDL / DNS)", action: #selector(menuRestoreSystem), keyEquivalent: "")
+            let restoreItem = NSMenuItem(title: "Restore System Settings", action: #selector(menuRestoreSystem), keyEquivalent: "")
             restoreItem.target = self
             menu.addItem(restoreItem)
         }
@@ -166,17 +166,17 @@ final class SenzaAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         let tunActive = sysTun?.active == true
         let backendLabel = (sysTun?.active_backend ?? "").uppercased()
         let tunnelTitle = tunActive
-            ? "● System-Wide Bypass (\(backendLabel)) — Turn Off"
-            : "Enable System-Wide Bypass (\(ctrl.exitNodeLabel))"
+            ? "Route Whole Mac Through \(backendLabel == "TAILSCALE" ? "Tailscale" : (backendLabel == "WARP" ? "WARP" : "Tunnel"))"
+            : "Route Whole Mac Through \(ctrl.exitNodeLabel)"
         let tunnelItem = NSMenuItem(title: tunnelTitle, action: #selector(menuToggleSystemTunnel), keyEquivalent: "t")
+        tunnelItem.state = tunActive ? .on : .off
         tunnelItem.target = self
         menu.addItem(tunnelItem)
 
         let svcInstalled = sysTun?.service_installed == true
-        let svcTitle = svcInstalled
-            ? "✓ Auto-Heal LaunchAgent (45s) — Uninstall"
-            : "Install Auto-Heal LaunchAgent (Whole Mac)"
-        let svcItem = NSMenuItem(title: svcTitle, action: #selector(menuToggleTunnelService), keyEquivalent: "")
+        let svcItem = NSMenuItem(title: "Keep Tunnel Healthy in Background", action: #selector(menuToggleTunnelService),
+                                 keyEquivalent: "")
+        svcItem.state = svcInstalled ? .on : .off
         svcItem.target = self
         menu.addItem(svcItem)
 

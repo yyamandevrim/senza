@@ -21,41 +21,38 @@ struct VisualEffectBackground: NSViewRepresentable {
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
-// MARK: - SwiftUI Views
+// MARK: - Main window
 
 struct SenzaRootView: View {
     @ObservedObject var ctrl: SenzaController
-
-    private let sapphire = Color(red: 0.04, green: 0.52, blue: 1.0)
+    @State private var networkName: String = ""
 
     var body: some View {
-        ZStack {
-            VisualEffectBackground(material: .underWindowBackground, blendingMode: .behindWindow)
-                .ignoresSafeArea()
-            LinearGradient(
-                colors: [Color(white: 0.10, opacity: 0.55), Color(white: 0.05, opacity: 0.80)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-
-            VStack(spacing: 16) {
-                headerRow
-                telemetryStrip
-                inputModeSection
-                clientSettingsCard
-                if let err = ctrl.errorMessage {
-                    errorBanner(err)
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, 20)
+                .padding(.top, 32)
+                .padding(.bottom, 16)
+            ScrollView {
+                VStack(spacing: 20) {
+                    ConnectionCard(ctrl: ctrl)
+                    inputSection
+                    settings
+                    if let err = ctrl.errorMessage { errorNote(err) }
                 }
-                Spacer(minLength: 0)
-                actionSection
-                footerBar
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 34)
-            .padding(.bottom, 16)
+            .scrollIndicators(.never)
+            actions
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+            footer
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
         }
-        .frame(width: 486, height: 648)
+        .frame(width: 480, height: 760)
+        .background(Theme.window)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $ctrl.showControlsSheet) {
             ControlsCheatSheetView(isPresented: $ctrl.showControlsSheet)
@@ -63,584 +60,560 @@ struct SenzaRootView: View {
         .sheet(isPresented: $ctrl.showStudioSheet) {
             ProfileStudioView(isPresented: $ctrl.showStudioSheet)
         }
+        .sheet(isPresented: $ctrl.showOnboarding) {
+            OnboardingSheet(ctrl: ctrl)
+        }
         .onAppear {
             ctrl.refreshDoctor()
+            ctrl.refreshOnboarding(presentIfNeeded: true)
         }
     }
 
-    private var headerRow: some View {
+    // Header: product name + the network Senza recognised. Tools on the right.
+    private var header: some View {
         HStack(spacing: 12) {
             if let img = SenzaCLI.appIconImage() {
                 Image(nsImage: img)
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 46, height: 46)
-                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                    .shadow(color: .black.opacity(0.45), radius: 6, y: 2)
+                    .frame(width: 32, height: 32)
             }
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 7) {
-                    Text("Senza")
-                        .font(.system(size: 19, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                    Text("GTA 6")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(sapphire)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(sapphire.opacity(0.16), in: Capsule())
-                        .overlay(Capsule().stroke(sapphire.opacity(0.35), lineWidth: 0.75))
-                }
-                Text("Virtual DualSense · PS5 Remote Play Suite")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.56))
+                Text("Senza").font(Theme.title()).foregroundStyle(Theme.text1)
+                Text(networkLine).font(Theme.small()).foregroundStyle(Theme.text3).lineLimit(1)
             }
             Spacer()
-            HStack(spacing: 6) {
-                IconHeaderButton(systemName: "slider.horizontal.3", help: "GTA 6 Sensitivity & Keybind Studio") {
-                    ctrl.showStudioSheet = true
+            HStack(spacing: 4) {
+                ToolButton(symbol: "slider.horizontal.3", help: "Sensitivity and key bindings") { ctrl.showStudioSheet = true }
+                ToolButton(symbol: "keyboard", help: "Controls") { ctrl.showControlsSheet = true }
+                ToolButton(symbol: "checklist", help: "Setup checklist") {
+                    ctrl.refreshOnboarding()
+                    ctrl.showOnboarding = true
                 }
-                IconHeaderButton(systemName: "keyboard", help: "GTA 6 Controls Cheat Sheet") {
-                    ctrl.showControlsSheet = true
-                }
-                IconHeaderButton(systemName: "arrow.clockwise", help: "Refresh Network Doctor", spinning: ctrl.doctorLoading) {
-                    ctrl.refreshDoctor()
-                }
+                ToolButton(symbol: "arrow.clockwise", help: "Measure again", busy: ctrl.doctorLoading) { ctrl.refreshDoctor() }
             }
         }
     }
 
-    private var telemetryStrip: some View {
-        HStack(spacing: 8) {
-            if let doc = ctrl.doctor {
-                let rttText = doc.network.rtt_median_ms.map { String(format: "%.0f ms", $0) } ?? "—"
-                let jitText = doc.network.jitter_ms.map { String(format: "%.1f ms", $0) } ?? "—"
-                let jitColor: Color = {
-                    guard let j = doc.network.jitter_ms else { return .gray }
-                    return j < 8 ? .green : (j < 20 ? .yellow : .red)
-                }()
-                let awdlActive = doc.network.awdl_active
-                let psnOk = (doc.firewall?.psn_sys_tls_ok ?? true) || (doc.firewall?.psn_cf_tls_ok ?? true)
-
-                TelemetryPill(label: "PING", value: rttText, dot: .green)
-                TelemetryPill(label: "JITTER", value: jitText, dot: jitColor)
-                TelemetryPill(label: "AWDL", value: awdlActive ? "Active" : "Clean", dot: awdlActive ? .orange : .green)
-                TelemetryPill(label: "PSN", value: psnOk ? "OK" : "Blocked", dot: psnOk ? .green : .red)
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Measuring WAN latency, jitter, AWDL & PSN reachability…")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.6))
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
-            }
+    private var networkLine: String {
+        guard let net = ctrl.doctor?.network_profile, net.id != nil else {
+            return ctrl.doctor == nil ? "Checking this network" : "Network not recognised"
         }
+        let router = net.router_ip.map { "router \($0)" } ?? ""
+        if let name = ctrl.networkName { return "\(name) · \(router)" }
+        return "Unsaved network · \(router)"
     }
 
-    private var inputModeSection: some View {
-        let emerald = Color(red: 0.16, green: 0.80, blue: 0.56)
-        return VStack(alignment: .leading, spacing: 8) {
+    // Input mode: three quiet options, the selected one is a surface step.
+    private var inputSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("INPUT MODE")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .tracking(0.8)
+                Text("Input").font(Theme.small(.medium)).foregroundStyle(Theme.text2)
                 Spacer()
                 if ctrl.connectedControllerName != nil {
-                    HStack(spacing: 4) {
-                        Circle().fill(Color.green).frame(width: 6, height: 6)
-                        Text(ctrl.connectedControllerBattery.map { "DualSense · \($0)" } ?? "DualSense Connected")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.green.opacity(0.92))
+                    HStack(spacing: 6) {
+                        StatusDot(tone: .good)
+                        Text(ctrl.connectedControllerBattery.map { "DualSense \($0)" } ?? "DualSense connected")
+                            .font(Theme.small()).foregroundStyle(Theme.text2)
                     }
                 }
             }
-
-            HStack(spacing: 8) {
-                ModeCard(
-                    title: "Trackpad",
-                    subtitle: "GTA 6 Smart Pack",
-                    icon: "rectangle.and.hand.point.up.left.filled",
-                    selected: ctrl.inputMode == .kbm,
-                    badge: nil,
-                    accent: sapphire
-                ) {
+            HStack(spacing: 4) {
+                ModeOption(title: "Trackpad", symbol: "rectangle.and.hand.point.up.left", selected: ctrl.inputMode == .kbm) {
                     ctrl.selectInputMode(.kbm)
                 }
-
-                ModeCard(
-                    title: "Hybrid",
-                    subtitle: "Hot-Swap + HUD",
-                    icon: "arrow.triangle.2.circlepath",
-                    selected: ctrl.inputMode == .hybrid,
-                    badge: ctrl.connectedControllerName != nil ? "LIVE" : nil,
-                    accent: emerald
-                ) {
+                ModeOption(title: "Hybrid", symbol: "arrow.left.arrow.right", selected: ctrl.inputMode == .hybrid) {
                     ctrl.selectInputMode(.hybrid)
                 }
-
-                ModeCard(
-                    title: "Native Pad",
-                    subtitle: "Pure DualSense",
-                    icon: "gamecontroller.fill",
-                    selected: ctrl.inputMode == .controller,
-                    badge: nil,
-                    accent: sapphire
-                ) {
+                ModeOption(title: "DualSense", symbol: "gamecontroller", selected: ctrl.inputMode == .controller) {
                     ctrl.selectInputMode(.controller)
                 }
             }
+            .padding(4)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.rCard, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rCard, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+            Text(modeDescription).font(Theme.small()).foregroundStyle(Theme.text3)
         }
     }
 
-    private var clientSettingsCard: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text("Client")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.82))
-                Spacer()
-                Picker("", selection: $ctrl.client) {
-                    ForEach(ClientKind.allCases) { item in
-                        Text(item.displayName).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 224)
-            }
+    private var modeDescription: String {
+        switch ctrl.inputMode {
+        case .kbm: return "Trackpad and keyboard become a virtual DualSense"
+        case .hybrid: return "Play on the DualSense, press 0 to switch to the trackpad any time"
+        case .controller: return "Your DualSense as is, with the network and Wi-Fi fixes"
+        }
+    }
 
-            if ctrl.client == .chiaki {
-                Divider().overlay(Color.white.opacity(0.08))
-                HStack {
-                    Text("Stream Preset")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.82))
-                    Spacer()
-                    Picker("", selection: $ctrl.preset) {
-                        ForEach(StreamPresetOption.allCases) { p in
-                            Text(p.label).tag(p)
+    private var settings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Session").font(Theme.small(.medium)).foregroundStyle(Theme.text2)
+            SettingsGroup {
+                SettingRow(title: "Client") {
+                    Picker("", selection: $ctrl.client) {
+                        ForEach(ClientKind.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 220)
+                }
+                if ctrl.client == .chiaki {
+                    SettingRow(title: "Stream preset", detail: "Auto uses this network's history") {
+                        Picker("", selection: $ctrl.preset) {
+                            ForEach(StreamPresetOption.allCases) { Text($0.label).tag($0) }
                         }
-                    }
-                    .labelsHidden()
-                    .frame(width: 190)
-                }
-            }
-
-            Divider().overlay(Color.white.opacity(0.08))
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Wi-Fi AWDL Lag Fix")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.88))
-                    Text("Pauses awdl0/llw0 & boosts UDP buffers via Touch ID")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.white.opacity(0.48))
-                }
-                Spacer()
-                Toggle("", isOn: $ctrl.privileged)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-            }
-
-            Divider().overlay(Color.white.opacity(0.08))
-
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Firewall Bypass")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.88))
-                    Text("Clean DNS / WARP / Tailscale if PSN is blocked")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.white.opacity(0.48))
-                }
-                Spacer()
-                Picker("", selection: $ctrl.firewall) {
-                    ForEach(FirewallMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
+                        .labelsHidden()
+                        .frame(width: 180)
                     }
                 }
-                .labelsHidden()
-                .frame(width: 126)
-            }
-
-            if ctrl.firewall == .tailscale {
-                Divider().overlay(Color.white.opacity(0.08))
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 10) {
-                        Text("Exit Node")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.82))
-                        Spacer()
-                        TextField("auto (tailnet)", text: $ctrl.tailscaleExitNode)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white)
+                SettingRow(title: "Wi-Fi lag fix", detail: wifiDetail) {
+                    Toggle("", isOn: $ctrl.privileged).toggleStyle(.switch).controlSize(.small).labelsHidden()
+                }
+                SettingRow(title: "Firewall bypass", detail: "When PSN or UDP is blocked on this network",
+                           showDivider: ctrl.firewall == .tailscale || ctrl.doctor?.network_profile?.id != nil) {
+                    Picker("", selection: $ctrl.firewall) {
+                        ForEach(FirewallMode.allCases) { Text($0.label).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 132)
+                }
+                if ctrl.firewall == .tailscale {
+                    SettingRow(title: "Exit node", detail: "Empty uses your config or the tailnet") {
+                        TextField("auto", text: $ctrl.tailscaleExitNode)
+                            .textFieldStyle(.roundedBorder)
+                            .font(Theme.mono(12))
                             .multilineTextAlignment(.trailing)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .frame(width: 156)
-                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 0.75))
-                            .onSubmit {
-                                ctrl.refreshDoctor()
-                            }
+                            .frame(width: 150)
+                            .onSubmit { ctrl.refreshDoctor() }
                     }
-
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(tailscaleStatusColor)
-                            .frame(width: 6, height: 6)
-                        Text(tailscaleStatusText)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.white.opacity(0.62))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Spacer(minLength: 4)
-                        let tunActive = ctrl.doctor?.system_tunnel?.active == true
-                        Button(action: { ctrl.toggleSystemTunnel() }) {
-                            HStack(spacing: 4) {
-                                if ctrl.tunnelBusy {
-                                    ProgressView().controlSize(.mini)
-                                } else {
-                                    Circle()
-                                        .fill(tunActive ? Color.green : Color.white.opacity(0.35))
-                                        .frame(width: 5.5, height: 5.5)
-                                }
-                                Text(tunActive ? "Mac Tunnel ON" : "Whole Mac")
-                                    .font(.system(size: 10, weight: .semibold))
-                            }
-                            .foregroundStyle(tunActive ? .green : .white.opacity(0.85))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(
-                                (tunActive ? Color.green.opacity(0.16) : Color.white.opacity(0.08)),
-                                in: Capsule()
-                            )
-                            .overlay(
-                                Capsule().stroke(
-                                    tunActive ? Color.green.opacity(0.42) : Color.white.opacity(0.14),
-                                    lineWidth: 0.75
-                                )
-                            )
+                    SettingRow(title: "Route the whole Mac", detail: tailscaleStatus,
+                               showDivider: ctrl.doctor?.network_profile?.id != nil) {
+                        if ctrl.tunnelBusy {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Toggle("", isOn: Binding(
+                                get: { ctrl.doctor?.system_tunnel?.active == true },
+                                set: { _ in ctrl.toggleSystemTunnel() }
+                            ))
+                            .toggleStyle(.switch).controlSize(.small).labelsHidden()
                         }
-                        .buttonStyle(.plain)
-                        .disabled(ctrl.tunnelBusy)
-                        .help("Route entire Mac through Tailscale exit node (auto WARP-bootstrap on FortiGate)")
                     }
+                }
+                if ctrl.doctor?.network_profile?.id != nil { networkRow }
+            }
+        }
+    }
+
+    private var wifiDetail: String {
+        let base = "Pauses AWDL and raises UDP buffers"
+        return ctrl.doctor?.helper?.ready == true ? base : base + ", asks for Touch ID"
+    }
+
+    private var tailscaleStatus: String {
+        if let st = ctrl.doctor?.firewall?.tailscale_exit_node_status, !st.isEmpty { return st }
+        return "Through \(ctrl.exitNodeLabel)"
+    }
+
+    @ViewBuilder private var networkRow: some View {
+        if let name = ctrl.networkName {
+            SettingRow(title: "Remembered for \(name)", detail: "These settings load when you join this network",
+                       showDivider: false) {
+                Button("Update") { ctrl.saveNetworkProfile(name: name) }
+                    .buttonStyle(QuietButtonStyle(height: 28))
+            }
+        } else {
+            SettingRow(title: "Remember for this network", detail: "Loads these settings next time",
+                       showDivider: false) {
+                HStack(spacing: 8) {
+                    TextField("Home", text: $networkName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 96)
+                    Button("Save") { ctrl.saveNetworkProfile(name: networkName) }
+                        .buttonStyle(QuietButtonStyle(height: 28))
+                        .disabled(networkName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
-        .padding(14)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(Color.white.opacity(0.09), lineWidth: 0.75))
     }
 
-    private var tailscaleStatusColor: Color {
-        guard let fw = ctrl.doctor?.firewall else { return .gray }
-        if fw.tailscale_exit_node_ready == true { return .green }
-        if fw.tailscale_state == "Stopped" { return sapphire }
-        if fw.tailscale_state == "NeedsLogin" || fw.tailscale_state == "NotRunning" { return .red }
-        return .orange
-    }
-
-    private var tailscaleStatusText: String {
-        guard let fw = ctrl.doctor?.firewall else {
-            return "Checking Tailscale exit node \(ctrl.exitNodeLabel)…"
-        }
-        if let st = fw.tailscale_exit_node_status, !st.isEmpty {
-            return st
-        }
-        return "Target: \(ctrl.exitNodeLabel) · auto-starts Tailscale on Launch"
-    }
-
-    private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text(message)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(2)
+    private func errorNote(_ message: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            StatusDot(tone: .warn)
+            Text(message).font(Theme.small()).foregroundStyle(Theme.text1).lineLimit(3)
             Spacer()
         }
-        .padding(10)
-        .background(Color.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.orange.opacity(0.35), lineWidth: 0.75))
+        .padding(12)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rCard, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
     }
 
-    @ViewBuilder
-    private var actionSection: some View {
+    @ViewBuilder private var actions: some View {
         switch ctrl.phase {
         case .idle:
-            let modeTag: String = {
-                switch ctrl.inputMode {
-                case .kbm: return "Trackpad"
-                case .hybrid: return "Hybrid"
-                case .controller: return "Native DualSense"
-                }
-            }()
             Button(action: { ctrl.launchSession() }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("Launch \(ctrl.client.displayName) · \(modeTag)")
-                        .font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 44)
-                .background(
-                    LinearGradient(
-                        colors: [sapphire, Color(red: 0.02, green: 0.39, blue: 0.88)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-                )
-                .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(Color.white.opacity(0.22), lineWidth: 0.75))
-                .shadow(color: sapphire.opacity(0.32), radius: 10, y: 3)
+                Text("Launch \(ctrl.client.displayName)")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PrimaryButtonStyle())
             .keyboardShortcut(.return, modifiers: [])
-
         case .launching(let msg), .restoring(let msg):
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 ProgressView().controlSize(.small)
-                Text(msg)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(1)
+                Text(msg).font(Theme.body()).foregroundStyle(Theme.text1).lineLimit(1)
                 Spacer()
             }
-            .padding(.horizontal, 14)
-            .frame(maxWidth: .infinity)
-            .frame(height: 44)
-            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(sapphire.opacity(0.45), lineWidth: 0.9))
-
+            .padding(.horizontal, 16)
+            .frame(height: 40)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.rControl + 2, style: .continuous))
         case .playing(_, let label):
-            HStack(spacing: 10) {
-                Button(action: { ctrl.bringActiveClientToFront() }) {
-                    HStack(spacing: 7) {
-                        Circle().fill(Color.green).frame(width: 8, height: 8)
-                        Text("Focus \(label)")
-                            .font(.system(size: 13.5, weight: .semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 42)
-                    .background(sapphire, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                }
-                .buttonStyle(.plain)
-
-                Button(action: { ctrl.endActiveSession() }) {
-                    Text("End Session")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .padding(.horizontal, 14)
-                        .frame(height: 42)
-                        .background(Color.red.opacity(0.24), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(Color.red.opacity(0.45), lineWidth: 0.75))
-                }
-                .buttonStyle(.plain)
+            HStack(spacing: 8) {
+                Button("Show \(label)") { ctrl.bringActiveClientToFront() }
+                    .buttonStyle(PrimaryButtonStyle())
+                Button("End session") { ctrl.endActiveSession() }
+                    .buttonStyle(QuietButtonStyle())
             }
         }
     }
 
-    private var footerBar: some View {
-        HStack {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(statusDotColor)
-                    .frame(width: 6.5, height: 6.5)
-                Text(ctrl.statusNote)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.56))
-                    .lineLimit(1)
-            }
+    private var footer: some View {
+        HStack(spacing: 8) {
+            StatusDot(tone: phaseTone)
+            Text(ctrl.statusNote).font(Theme.small()).foregroundStyle(Theme.text3).lineLimit(1)
             Spacer()
-            Button("Restore System") {
-                ctrl.runRestoreSystem()
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.white.opacity(0.65))
-            .disabled(ctrl.isBusy)
+            Button("Restore system") { ctrl.runRestoreSystem() }
+                .buttonStyle(.plain)
+                .font(Theme.small())
+                .foregroundStyle(Theme.text2)
+                .disabled(ctrl.isBusy)
         }
     }
 
-    private var statusDotColor: Color {
+    private var phaseTone: StatusTone {
         switch ctrl.phase {
-        case .idle: return .gray
-        case .launching, .restoring: return .orange
-        case .playing: return .green
+        case .idle: return .neutral
+        case .launching, .restoring: return .warn
+        case .playing: return .good
         }
     }
 }
 
-struct TelemetryPill: View {
-    let label: String
-    let value: String
-    let dot: Color
+// MARK: - Connection card (the one rich element: live figure + this network's latency history)
+
+struct ConnectionCard: View {
+    @ObservedObject var ctrl: SenzaController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Circle().fill(dot).frame(width: 5.5, height: 5.5)
-                Text(label)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.45))
-            }
-            Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.92))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Color.white.opacity(0.08), lineWidth: 0.75))
-    }
-}
-
-struct ModeCard: View {
-    let title: String
-    let subtitle: String
-    let icon: String
-    let selected: Bool
-    let badge: String?
-    let accent: Color
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(selected ? accent : .white.opacity(0.65))
-                    if let badge {
-                        Text(badge)
-                            .font(.system(size: 8.5, weight: .bold))
-                            .foregroundStyle(.green)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(Color.green.opacity(0.16), in: Capsule())
-                    }
-                    Spacer()
-                    if selected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 13))
-                            .foregroundStyle(accent)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Latency to \(ctrl.doctor?.network.host ?? ctrl.probeHost)")
+                        .font(Theme.small()).foregroundStyle(Theme.text3)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(rtt).font(Theme.figure()).foregroundStyle(Theme.text1)
+                        Text("ms").font(Theme.body()).foregroundStyle(Theme.text3)
                     }
                 }
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text(subtitle)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.white.opacity(0.55))
+                Spacer()
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                    stat("Jitter", jitter, jitterTone)
+                    stat("Loss", loss, lossTone)
+                    stat("AWDL", awdl, ctrl.doctor?.network.awdl_active == true ? .warn : .good)
+                    stat("PSN", psn, psnTone)
+                }
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                (selected ? accent.opacity(0.14) : Color.white.opacity(0.045)),
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(selected ? accent.opacity(0.75) : Color.white.opacity(0.08), lineWidth: selected ? 1.2 : 0.75)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            LatencyChart(points: ctrl.recentRtt)
+                .frame(height: 56)
+            Text(historyLine).font(Theme.caption()).foregroundStyle(Theme.text3)
         }
-        .buttonStyle(.plain)
+        .padding(16)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.rCard, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private func stat(_ label: String, _ value: String, _ tone: StatusTone) -> some View {
+        GridRow {
+            Text(label).font(Theme.small()).foregroundStyle(Theme.text3)
+            HStack(spacing: 6) {
+                Text(value)
+                    .font(value.first?.isNumber == true ? Theme.mono(12) : Theme.small())
+                    .foregroundStyle(Theme.text1)
+                StatusDot(tone: tone)
+            }
+            .gridColumnAlignment(.trailing)
+        }
+    }
+
+    private var net: DoctorResponse.Network? { ctrl.doctor?.network }
+    private var rtt: String { net?.rtt_median_ms.map { String(format: "%.0f", $0) } ?? "–" }
+    private var jitter: String { net?.jitter_ms.map { String(format: "%.1f ms", $0) } ?? "–" }
+    private var loss: String { net.map { String(format: "%.0f%%", $0.packet_loss_pct) } ?? "–" }
+    private var awdl: String { net == nil ? "–" : (net!.awdl_active ? "on" : "off") }
+    private var psnOk: Bool? {
+        guard let fw = ctrl.doctor?.firewall else { return nil }
+        return fw.psn_sys_tls_ok || fw.psn_cf_tls_ok
+    }
+    private var psn: String { psnOk.map { $0 ? "reachable" : "blocked" } ?? "–" }
+    private var jitterTone: StatusTone {
+        guard let j = net?.jitter_ms else { return .neutral }
+        return j < 8 ? .good : (j < 20 ? .warn : .bad)
+    }
+    private var lossTone: StatusTone {
+        guard let l = net?.packet_loss_pct else { return .neutral }
+        return l < 0.5 ? .good : (l < 3 ? .warn : .bad)
+    }
+    private var psnTone: StatusTone { psnOk.map { $0 ? .good : .bad } ?? .neutral }
+
+    private var historyLine: String {
+        guard let h = ctrl.doctor?.history, h.probes >= 2 else {
+            return "History builds up as you play on this network"
+        }
+        var parts = ["\(h.probes) checks on this network"]
+        if let p50 = h.rtt_median_ms { parts.append(String(format: "median %.0f ms", p50)) }
+        if let j = h.jitter_p75_ms { parts.append(String(format: "jitter p75 %.1f ms", j)) }
+        if h.play_minutes >= 1 { parts.append(String(format: "%.0f min played", h.play_minutes)) }
+        return parts.joined(separator: " · ")
     }
 }
 
-struct IconHeaderButton: View {
-    let systemName: String
-    let help: String
-    var spinning: Bool = false
+/// Recent latency on this network: muted grid, one accent line, the latest point marked.
+struct LatencyChart: View {
+    let points: [Double]
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let maxV = max((points.max() ?? 40) * 1.15, 20)
+            ZStack(alignment: .topLeading) {
+                ForEach([0.0, 0.5, 1.0], id: \.self) { f in
+                    Path { p in
+                        p.move(to: CGPoint(x: 0, y: h * f))
+                        p.addLine(to: CGPoint(x: w, y: h * f))
+                    }
+                    .stroke(Theme.hairline, style: StrokeStyle(lineWidth: 1, dash: f == 1.0 ? [] : [2, 4]))
+                }
+                Text(String(format: "%.0f ms", maxV)).font(Theme.mono(10, .regular)).foregroundStyle(Theme.text3)
+                    .offset(y: -2)
+                if points.count >= 2 {
+                    let step = w / CGFloat(points.count - 1)
+                    let pt: (Int) -> CGPoint = { i in
+                        CGPoint(x: CGFloat(i) * step, y: h - CGFloat(points[i] / maxV) * h)
+                    }
+                    Path { p in
+                        p.move(to: pt(0))
+                        for i in 1..<points.count { p.addLine(to: pt(i)) }
+                    }
+                    .stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    Circle().fill(Theme.accent).frame(width: 6, height: 6)
+                        .position(pt(points.count - 1))
+                } else {
+                    Text("No checks yet").font(Theme.caption()).foregroundStyle(Theme.text3)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+    }
+}
+
+struct ModeOption: View {
+    let title: String
+    let symbol: String
+    let selected: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Group {
-                if spinning {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: systemName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.8))
-                }
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 14, weight: .regular))
+                    .frame(width: 18)
+                Text(title).font(Theme.body(.medium))
             }
-            .frame(width: 30, height: 30)
-            .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.white.opacity(0.10), lineWidth: 0.75))
+            .foregroundStyle(selected ? Theme.text1 : Theme.text2)
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .background(selected ? Theme.surfaceRaised : .clear,
+                        in: RoundedRectangle(cornerRadius: Theme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.rControl, style: .continuous)
+                .stroke(selected ? Color.white.opacity(0.12) : .clear, lineWidth: 1))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.12), value: selected)
+    }
+}
+
+struct ToolButton: View {
+    let symbol: String
+    let help: String
+    var busy: Bool = false
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: symbol).font(.system(size: 14, weight: .regular))
+                }
+            }
+            .foregroundStyle(hover ? Theme.text1 : Theme.text2)
+            .frame(width: 28, height: 28)
+            .background(hover ? Theme.surfaceRaised : .clear, in: RoundedRectangle(cornerRadius: Theme.rControl, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
         .help(help)
     }
 }
 
-struct ControlsCheatSheetView: View {
-    @Binding var isPresented: Bool
+// MARK: - First-run checklist
 
-    private let rows: [(String, String)] = [
-        ("DualSense Hot-Swap", "Touch physical DualSense anytime · [0] switches back to Trackpad"),
-        ("0 (Zero)  /  \\", "0: Lock/Release Capture · \\: Toggle Live PS→Key Bottom Bar"),
-        ("F / G / O", "F: Enter/Exit (Auto Car) · G: Car · O: Aircraft"),
-        ("Aiming (Ctrl / RMB)", "L2 Aim · +V: 1-Tap Switch Shoulder · +Z: Sniper · 2P: Scope Zoom"),
-        ("Vehicle / Bicycle", "W/S: Gas/Brake · Space: Handbrake/Bike(✕) · Click/Q: Shoot(R1) · C: Lights/Duck(◯)"),
-        ("Vehicle Extras", "Tab: Loadout Wheel(L1) · R: Melee(▢) · Shift/E: Horn/Nitro(L3) · 1-4: D-Pad"),
-        ("Aircraft Flight", "W/S: Throttle · ↑↓←→: Pitch & Roll (2-Hand) · A/D + Shift/C: 1-Hand"),
-        ("Aircraft Combat", "Q/E: Yaw Left(▢) / Right(◯) · Space/Click: Shoot(R1) · Tab: L1 · R: Gear(L3)"),
-        ("U / I / Y / L (Hold)", "U: Hotwire (◡) · I: 360° Circle · Y: Sticky R-Stick · L: Rapid ✕"),
-        ("2-Finger Scroll", "DualSense Touchpad Swipe · While Aiming (L2): Hold D-Pad Up/Down Zoom"),
-        ("- / =  ·  [  ·  ;  ·  H", "Live Sens ±0.10 · PS5 Mic Mute · Ping/AWDL · Top-Right HUD"),
-        ("] (Toggle)", "Auto-Sprint (Foot) · Cruise Control (Car / Aircraft)"),
-        ("W A S D · Space · C · R", "Move · Jump/Swim(✕) · Crouch/Kick(◯) · Reload/Melee(▢) · E: Interact(△)"),
-    ]
+struct OnboardingSheet: View {
+    @ObservedObject var ctrl: SenzaController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("GTA 6 Smart Pack Controls")
-                    .font(.system(size: 16, weight: .semibold))
-                Spacer()
-                Button("Done") { isPresented = false }
-                    .keyboardShortcut(.escape, modifiers: [])
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Set up Senza").font(Theme.title()).foregroundStyle(Theme.text1)
+                Text("What PS Remote Play needs on this Mac. Required items first.")
+                    .font(Theme.small()).foregroundStyle(Theme.text3)
             }
-            Divider()
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(rows, id: \.0) { item in
-                        HStack(alignment: .top, spacing: 10) {
-                            Text(item.0)
-                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.35, green: 0.72, blue: 1.0))
-                                .frame(width: 155, alignment: .leading)
-                            Text(item.1)
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(.white.opacity(0.88))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.vertical, 5)
-                        .padding(.horizontal, 8)
-                        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 7))
+            if let checks = ctrl.onboard?.checks {
+                SettingsGroup {
+                    ForEach(Array(checks.enumerated()), id: \.element.id) { idx, check in
+                        checkRow(check, last: idx == checks.count - 1)
                     }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking").font(Theme.small()).foregroundStyle(Theme.text3)
+                }
+            }
+            HStack {
+                Spacer()
+                if ctrl.onboard?.ready == true {
+                    Button("Done") { ctrl.showOnboarding = false }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .frame(width: 120)
+                        .keyboardShortcut(.return, modifiers: [])
+                } else {
+                    Button("Continue anyway") { ctrl.showOnboarding = false }
+                        .buttonStyle(QuietButtonStyle())
                 }
             }
         }
-        .padding(18)
-        .frame(width: 480, height: 440)
+        .padding(24)
+        .frame(width: 520)
+        .background(Theme.window)
+        .preferredColorScheme(.dark)
+    }
+
+    private func checkRow(_ c: OnboardResponse.Check, last: Bool) -> some View {
+        SettingRow(title: c.title, detail: (c.ok || c.runnableArgs != nil || !c.required) ? c.detail : c.fix,
+                   showDivider: !last) {
+            if c.ok {
+                Image(systemName: "checkmark").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.good)
+            } else if ctrl.onboardBusy == c.id {
+                ProgressView().controlSize(.small)
+            } else if c.runnableArgs != nil {
+                Button(c.required ? "Fix" : "Set up") { ctrl.runOnboardingFix(c) }
+                    .buttonStyle(QuietButtonStyle(height: 28))
+                    .disabled(ctrl.onboardBusy != nil)
+            } else {
+                Text(c.required ? "Required" : "Optional").font(Theme.small()).foregroundStyle(c.required ? Theme.warn : Theme.text3)
+            }
+        }
+    }
+}
+
+// MARK: - Controls reference
+
+struct ControlsCheatSheetView: View {
+    @Binding var isPresented: Bool
+
+    private struct Entry: Identifiable {
+        let keys: [String]
+        let text: String
+        var face: FaceButton? = nil
+        var id: String { keys.joined() + text }
+    }
+
+    private let sections: [(String, [Entry])] = [
+        ("Anywhere", [
+            Entry(keys: ["0"], text: "Lock or release the trackpad"),
+            Entry(keys: ["G"], text: "Vehicle mode"),
+            Entry(keys: ["O"], text: "Aircraft mode"),
+            Entry(keys: ["T"], text: "Smart assists on or off"),
+            Entry(keys: ["H"], text: "Controls panel"),
+            Entry(keys: ["\\"], text: "Prompt bar"),
+            Entry(keys: [";"], text: "Ping, jitter and AWDL"),
+            Entry(keys: ["-", "="], text: "Sensitivity, saved to the profile"),
+            Entry(keys: ["["], text: "PS5 microphone mute"),
+        ]),
+        ("On foot", [
+            Entry(keys: ["W", "A", "S", "D"], text: "Move, hold Z to walk"),
+            Entry(keys: ["Space"], text: "Jump, climb, swim", face: .cross),
+            Entry(keys: ["C"], text: "Crouch", face: .circle),
+            Entry(keys: ["R"], text: "Reload, melee", face: .square),
+            Entry(keys: ["E", "F"], text: "Interact, enter vehicle", face: .triangle),
+            Entry(keys: ["Ctrl"], text: "Aim L2, V switches shoulder, Z sniper"),
+            Entry(keys: ["Tab"], text: "Weapon wheel L1"),
+        ]),
+        ("Vehicle", [
+            Entry(keys: ["W", "S"], text: "Gas R2, brake L2"),
+            Entry(keys: ["Space"], text: "Handbrake", face: .cross),
+            Entry(keys: ["F"], text: "Exit", face: .triangle),
+            Entry(keys: ["]"], text: "Cruise control"),
+        ]),
+        ("Aircraft", [
+            Entry(keys: ["W", "S"], text: "Throttle"),
+            Entry(keys: ["↑", "↓", "←", "→"], text: "Pitch and roll"),
+            Entry(keys: ["Q", "E"], text: "Rudder"),
+            Entry(keys: ["R"], text: "Landing gear L3"),
+        ]),
+        ("Assists, hold", [
+            Entry(keys: ["U"], text: "Hotwire sweep"),
+            Entry(keys: ["I"], text: "Full circle"),
+            Entry(keys: ["Y"], text: "Hold the right stick"),
+            Entry(keys: ["L"], text: "Rapid tap", face: .cross),
+        ]),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Controls").font(Theme.title()).foregroundStyle(Theme.text1)
+                Spacer()
+                Button("Done") { isPresented = false }
+                    .buttonStyle(QuietButtonStyle(height: 28))
+                    .keyboardShortcut(.escape, modifiers: [])
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    ForEach(sections, id: \.0) { title, entries in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(title).font(Theme.small(.medium)).foregroundStyle(Theme.text2)
+                            VStack(spacing: 0) {
+                                ForEach(entries) { e in
+                                    HStack(spacing: 12) {
+                                        HStack(spacing: 4) { ForEach(e.keys, id: \.self) { Keycap(label: $0) } }
+                                            .frame(width: 120, alignment: .leading)
+                                        Text(e.text).font(Theme.body()).foregroundStyle(Theme.text1)
+                                        Spacer()
+                                        if let f = e.face { FaceGlyph(button: f) }
+                                    }
+                                    .frame(height: 32)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+        }
+        .padding(24)
+        .frame(width: 480, height: 560)
+        .background(Theme.window)
         .preferredColorScheme(.dark)
     }
 }

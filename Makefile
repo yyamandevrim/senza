@@ -91,6 +91,14 @@ hud-preview: $(COMMON_OBJS) $(OBJ_DIR)/iokit_dualsense_pad.o tools/hud_preview.m
 	./bin/senza export-profile --output $(BUILD_DIR)/hud-preview.cfg >/dev/null
 	./$(BUILD_DIR)/hud_preview $(BUILD_DIR)/hud-preview $(BUILD_DIR)/hud-preview.cfg
 
+# Render Senza.app windows to build/gui-preview/*.png with live CLI data
+GUI_SOURCES := $(filter-out native/gui/Sources/AppDelegate.swift,$(wildcard native/gui/Sources/*.swift))
+gui-preview: $(GUI_SOURCES) tools/gui_preview.swift
+	mkdir -p $(BUILD_DIR)
+	swiftc -O -target "$$(uname -m)-apple-macosx13.0" -framework AppKit -framework SwiftUI -framework GameController \
+		$(GUI_SOURCES) tools/gui_preview.swift -o $(BUILD_DIR)/gui_preview
+	./$(BUILD_DIR)/gui_preview $(BUILD_DIR)/gui-preview
+
 lint:
 	ruff check senza tests
 	ruff format --check senza tests

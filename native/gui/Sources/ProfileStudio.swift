@@ -65,9 +65,9 @@ struct SenzaKeyMapper {
         case "Down": return "↓ Down"
         case "Left": return "← Left"
         case "Right": return "→ Right"
-        case "LMB": return "Left Click"
-        case "RMB": return "Right Click"
-        case "MMB": return "Middle Click"
+        case "LMB": return "Left click"
+        case "RMB": return "Right click"
+        case "MMB": return "Middle click"
         default: return token
         }
     }
@@ -100,7 +100,7 @@ struct KeybindEntry: Identifiable, Equatable {
 }
 
 enum StudioTab: String, CaseIterable, Identifiable {
-    case tuning = "Tuning & Curves"
+    case tuning = "Tuning"
     case keybinds = "Keybinds"
     var id: String { rawValue }
 }
@@ -304,7 +304,7 @@ final class ProfileStudioModel: ObservableObject {
             "Escape": "OPTIONS", "P": "PS", "N": "SHARE",
             "1": "DPAD_UP", "2": "DPAD_RIGHT", "3": "DPAD_DOWN", "4": "DPAD_LEFT",
         ])
-        statusText = "GTA 6 defaults staged — click Save & Hot-Reload to apply."
+        statusText = "GTA 6 defaults loaded. Save to apply them"
     }
 
     func saveAndHotReload() {
@@ -371,7 +371,7 @@ final class ProfileStudioModel: ObservableObject {
 
         saving = true
         errorText = nil
-        statusText = "Saving & exporting live profile…"
+        statusText = "Saving"
 
         do {
             let jsonData = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
@@ -387,7 +387,7 @@ final class ProfileStudioModel: ObservableObject {
             guard let self else { return }
             self.saving = false
             if result.ok {
-                self.statusText = "Saved & Live Hot-Reloaded (no restart needed)"
+                self.statusText = "Saved and applied to the running session"
             } else {
                 let msg = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.errorText = msg.isEmpty ? "Validation failed while exporting profile." : msg
@@ -442,11 +442,11 @@ struct ResponseCurveCanvas: View {
                 // Deadzone shaded band
                 let dzH = h * CGFloat(deadzone)
                 let dzRect = CGRect(x: plot.minX, y: plot.maxY - dzH, width: w, height: dzH)
-                ctx.fill(Path(dzRect), with: .color(Color.orange.opacity(0.11)))
+                ctx.fill(Path(dzRect), with: .color(Color.white.opacity(0.05)))
                 var dzLine = Path()
                 dzLine.move(to: CGPoint(x: plot.minX, y: plot.maxY - dzH))
                 dzLine.addLine(to: CGPoint(x: plot.maxX, y: plot.maxY - dzH))
-                ctx.stroke(dzLine, with: .color(Color.orange.opacity(0.45)), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                ctx.stroke(dzLine, with: .color(Color.white.opacity(0.30)), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
 
                 // Linear reference diagonal
                 var diag = Path()
@@ -469,28 +469,28 @@ struct ResponseCurveCanvas: View {
                 // Sniper curve (violet)
                 ctx.stroke(
                     makeCurvePath(scale: adsScale * sniperScale),
-                    with: .color(Color(red: 0.76, green: 0.54, blue: 1.0).opacity(0.85)),
+                    with: .color(Theme.square.opacity(0.85)),
                     style: StrokeStyle(lineWidth: 1.5, dash: [3, 3])
                 )
                 // ADS curve (amber)
                 ctx.stroke(
                     makeCurvePath(scale: adsScale),
-                    with: .color(Color(red: 1.0, green: 0.76, blue: 0.30).opacity(0.92)),
+                    with: .color(Theme.warn.opacity(0.92)),
                     style: StrokeStyle(lineWidth: 1.8, dash: [6, 3])
                 )
                 // Hipfire / Normal curve (sapphire cyan)
                 ctx.stroke(
                     makeCurvePath(scale: 1.0),
-                    with: .color(Color(red: 0.25, green: 0.78, blue: 1.0)),
+                    with: .color(Theme.accent),
                     style: StrokeStyle(lineWidth: 2.4, lineCap: .round)
                 )
             }
 
             HStack(spacing: 12) {
-                LegendChip(color: Color(red: 0.25, green: 0.78, blue: 1.0), label: "Aim \(String(format: "%.2fx", sensitivity))")
-                LegendChip(color: Color(red: 1.0, green: 0.76, blue: 0.30), label: "ADS \(Int((adsScale * 100).rounded()))%")
-                LegendChip(color: Color(red: 0.76, green: 0.54, blue: 1.0), label: "Sniper \(Int((sniperScale * 100).rounded()))%")
-                LegendChip(color: Color.orange, label: "DZ \(Int((deadzone * 100).rounded()))%")
+                LegendChip(color: Theme.accent, label: "Aim \(String(format: "%.2fx", sensitivity))")
+                LegendChip(color: Theme.warn, label: "ADS \(Int((adsScale * 100).rounded()))%")
+                LegendChip(color: Theme.square, label: "Sniper \(Int((sniperScale * 100).rounded()))%")
+                LegendChip(color: Theme.text3, label: "Deadzone \(Int((deadzone * 100).rounded()))%")
             }
             .padding(.leading, 34)
             .padding(.top, 6)
@@ -508,7 +508,7 @@ struct LegendChip: View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(label)
-                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .font(Theme.mono(10.5))
                 .foregroundStyle(.white.opacity(0.84))
         }
     }
@@ -526,15 +526,15 @@ struct StudioSliderRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(Theme.small(.medium))
                     .foregroundStyle(.white.opacity(0.92))
                 Text(subtitle)
-                    .font(.system(size: 10.5))
+                    .font(Theme.caption())
                     .foregroundStyle(.white.opacity(0.45))
                 Spacer()
                 Text(format(value))
-                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color(red: 0.35, green: 0.78, blue: 1.0))
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.accent)
             }
             Slider(value: $value, in: range, step: step)
                 .controlSize(.small)
@@ -550,14 +550,14 @@ struct KeyCaptureButton: View {
     @State private var isRecording: Bool = false
     @State private var monitor: Any? = nil
 
-    private let sapphire = Color(red: 0.04, green: 0.52, blue: 1.0)
+    private let sapphire = Theme.accent
 
     var body: some View {
         HStack(spacing: 4) {
             Button(action: { isRecording ? stopRecording() : startRecording() }) {
                 Text(isRecording ? "Press key / right-click…" : SenzaKeyMapper.displayKey(keyName))
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(isRecording ? Color(red: 0.45, green: 0.88, blue: 1.0) : .white)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(isRecording ? Theme.accent : .white)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4.5)
                     .frame(minWidth: 106)
@@ -578,7 +578,7 @@ struct KeyCaptureButton: View {
                     stopRecording()
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                .font(Theme.mono(10.5))
                 .foregroundStyle(.white.opacity(0.9))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
@@ -589,7 +589,7 @@ struct KeyCaptureButton: View {
                     stopRecording()
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                .font(Theme.mono(10.5))
                 .foregroundStyle(.white.opacity(0.9))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
@@ -599,7 +599,7 @@ struct KeyCaptureButton: View {
                     stopRecording()
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 9.5, weight: .bold))
+                .font(Theme.caption(.medium))
                 .foregroundStyle(.white.opacity(0.7))
                 .padding(.horizontal, 5)
                 .padding(.vertical, 4)
@@ -647,17 +647,17 @@ struct ProfileStudioView: View {
     @State private var activeTab: StudioTab = .tuning
     @State private var keybindSection: KeybindSection = .onFoot
 
-    private let sapphire = Color(red: 0.04, green: 0.52, blue: 1.0)
+    private let sapphire = Theme.accent
 
     var body: some View {
         VStack(spacing: 12) {
             // Top bar
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("GTA 6 Sensitivity & Keybind Studio")
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    Text("Edits profiles/gta6.json · Live hot-reloads inside running Remote Play")
-                        .font(.system(size: 11))
+                    Text("Sensitivity and keys")
+                        .font(Theme.title())
+                    Text("Edits profiles/gta6.json and applies to a running session instantly")
+                        .font(Theme.small())
                         .foregroundStyle(.white.opacity(0.55))
                 }
                 Spacer()
@@ -679,24 +679,24 @@ struct ProfileStudioView: View {
             }
 
             if let err = model.errorText {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(err).font(.system(size: 11)).foregroundStyle(.white.opacity(0.9))
+                HStack(spacing: 8) {
+                    StatusDot(tone: .warn)
+                    Text(err).font(Theme.small()).foregroundStyle(Theme.text1)
                     Spacer()
                 }
-                .padding(8)
-                .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                .padding(12)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.rControl, style: .continuous))
             }
 
             Divider().overlay(Color.white.opacity(0.08))
 
             // Bottom action bar
             HStack(spacing: 10) {
-                Button("Reset GTA 6 Defaults") {
+                Button("Reset to GTA 6 defaults") {
                     model.resetDefaults()
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(Theme.small(.medium))
                 .foregroundStyle(.white.opacity(0.72))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -704,9 +704,9 @@ struct ProfileStudioView: View {
 
                 if let status = model.statusText {
                     HStack(spacing: 5) {
-                        Circle().fill(Color.green).frame(width: 6, height: 6)
+                        StatusDot(tone: .good)
                         Text(status)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(Theme.small(.medium))
                             .foregroundStyle(.green.opacity(0.92))
                             .lineLimit(1)
                     }
@@ -715,29 +715,23 @@ struct ProfileStudioView: View {
                 Spacer()
 
                 Button("Close") { isPresented = false }
+                    .buttonStyle(QuietButtonStyle(height: 32))
                     .keyboardShortcut(.escape, modifiers: [])
 
                 Button(action: { model.saveAndHotReload() }) {
-                    HStack(spacing: 6) {
-                        if model.saving {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "bolt.fill").font(.system(size: 11))
-                        }
-                        Text("Save & Hot-Reload")
-                            .font(.system(size: 12, weight: .semibold))
+                    HStack(spacing: 8) {
+                        if model.saving { ProgressView().controlSize(.small) }
+                        Text("Save and apply live")
                     }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(sapphire, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PrimaryButtonStyle())
+                .frame(width: 180)
                 .disabled(model.saving)
             }
         }
-        .padding(18)
+        .padding(20)
         .frame(width: 640, height: 590)
+        .background(Theme.window)
         .preferredColorScheme(.dark)
         .onAppear { model.load() }
     }
@@ -753,19 +747,19 @@ struct ProfileStudioView: View {
             )
 
             HStack(spacing: 8) {
-                Text("Quick Curve:")
-                    .font(.system(size: 11, weight: .medium))
+                Text("Curve")
+                    .font(Theme.small(.medium))
                     .foregroundStyle(.white.opacity(0.55))
-                presetPill("Balanced GTA 6") { model.applyTuningPreset("balanced") }
-                presetPill("Snappy Flick") { model.applyTuningPreset("snappy") }
-                presetPill("Precision Sniper") { model.applyTuningPreset("precision") }
+                presetPill("Balanced") { model.applyTuningPreset("balanced") }
+                presetPill("Snappy flick") { model.applyTuningPreset("snappy") }
+                presetPill("Precision sniper") { model.applyTuningPreset("precision") }
                 Spacer()
             }
 
             ScrollView {
                 VStack(spacing: 7) {
                     StudioSliderRow(
-                        title: "Aim Sensitivity",
+                        title: "Aim sensitivity",
                         subtitle: "Trackpad / mouse camera speed",
                         value: $model.sensitivity,
                         range: 0.50...6.00,
@@ -774,7 +768,7 @@ struct ProfileStudioView: View {
 
                     HStack(spacing: 8) {
                         StudioSliderRow(
-                            title: "ADS Scale",
+                            title: "ADS scale",
                             subtitle: "L2 aiming",
                             value: $model.adsScale,
                             range: 0.15...1.00,
@@ -782,7 +776,7 @@ struct ProfileStudioView: View {
                         ) { "\(Int(($0 * 100).rounded()))%" }
 
                         StudioSliderRow(
-                            title: "Sniper Scale",
+                            title: "Sniper scale",
                             subtitle: "L2 + Z",
                             value: $model.sniperScale,
                             range: 0.15...1.00,
@@ -792,7 +786,7 @@ struct ProfileStudioView: View {
 
                     HStack(spacing: 8) {
                         StudioSliderRow(
-                            title: "Stick Deadzone",
+                            title: "Stick deadzone",
                             subtitle: "GTA inner zone",
                             value: $model.deadzone,
                             range: 0.00...0.40,
@@ -800,7 +794,7 @@ struct ProfileStudioView: View {
                         ) { "\(Int(($0 * 100).rounded()))%" }
 
                         StudioSliderRow(
-                            title: "Curve Exponent",
+                            title: "Curve exponent",
                             subtitle: "<1 snappy · >1 micro",
                             value: $model.curveExponent,
                             range: 0.45...1.80,
@@ -818,7 +812,7 @@ struct ProfileStudioView: View {
                         ) { "\(Int(($0 * 100).rounded()))%" }
 
                         StudioSliderRow(
-                            title: "Trackpad Accel",
+                            title: "Trackpad acceleration",
                             subtitle: "Fast flick boost",
                             value: $model.trackpadAccel,
                             range: 0.80...2.50,
@@ -827,7 +821,7 @@ struct ProfileStudioView: View {
                     }
 
                     StudioSliderRow(
-                        title: "Walk Speed Scale",
+                        title: "Walk speed",
                         subtitle: "Hold '\(SenzaKeyMapper.displayKey(model.walkModifier))' slow walk",
                         value: $model.walkScale,
                         range: 0.20...0.85,
@@ -835,13 +829,13 @@ struct ProfileStudioView: View {
                     ) { "\(Int(($0 * 100).rounded()))%" }
 
                     HStack(spacing: 16) {
-                        Toggle("Trackpad Mode", isOn: $model.trackpadMode)
-                        Toggle("Force Touch Haptics", isOn: $model.trackpadHaptics)
-                        Toggle("Smart Pack Default", isOn: $model.enabledByDefault)
+                        Toggle("Trackpad mode", isOn: $model.trackpadMode)
+                        Toggle("Force Touch haptics", isOn: $model.trackpadHaptics)
+                        Toggle("Smart assists on at start", isOn: $model.enabledByDefault)
                         Toggle("Invert Y", isOn: $model.invertY)
                     }
                     .toggleStyle(.checkbox)
-                    .font(.system(size: 11.5))
+                    .font(Theme.small())
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -854,7 +848,7 @@ struct ProfileStudioView: View {
     private func presetPill(_ title: String, action: @escaping () -> Void) -> some View {
         Button(title, action: action)
             .buttonStyle(.plain)
-            .font(.system(size: 10.5, weight: .semibold))
+            .font(Theme.caption(.medium))
             .foregroundStyle(.white.opacity(0.86))
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
@@ -875,7 +869,7 @@ struct ProfileStudioView: View {
                 if keybindSection != .smart {
                     Button(action: addBindingForCurrentSection) {
                         Label("Add", systemImage: "plus")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(Theme.small(.medium))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(sapphire.opacity(0.24), in: RoundedRectangle(cornerRadius: 7))
@@ -916,7 +910,7 @@ struct ProfileStudioView: View {
                 HStack(spacing: 10) {
                     KeyCaptureButton(keyName: $entry.key)
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 10))
+                        .font(Theme.caption())
                         .foregroundStyle(.white.opacity(0.4))
                     Picker("", selection: $entry.target) {
                         ForEach(SenzaKeyMapper.allTargets, id: \.id) { t in
@@ -930,7 +924,7 @@ struct ProfileStudioView: View {
                         entries.wrappedValue.removeAll { $0.id == entry.id }
                     }) {
                         Image(systemName: "trash")
-                            .font(.system(size: 11))
+                            .font(Theme.small())
                             .foregroundStyle(.white.opacity(0.5))
                             .padding(5)
                     }
@@ -945,33 +939,33 @@ struct ProfileStudioView: View {
 
     private var smartAndHotkeysEditor: some View {
         VStack(spacing: 6) {
-            hotkeyRow("Toggle Capture (Lock / Release)", key: $model.toggleCapture)
-            hotkeyRow("Vehicle Mode Toggle", key: $model.toggleVehicle)
-            hotkeyRow("Aircraft Mode Toggle", key: $model.toggleAircraft)
-            hotkeyRow("Smart Pack Mode Toggle", key: $model.toggleSmart)
+            hotkeyRow("Lock or release capture", key: $model.toggleCapture)
+            hotkeyRow("Vehicle mode", key: $model.toggleVehicle)
+            hotkeyRow("Aircraft mode", key: $model.toggleAircraft)
+            hotkeyRow("Smart assists", key: $model.toggleSmart)
             Divider().overlay(Color.white.opacity(0.08))
-            hotkeyRow("Move Up (Left Stick +Y)", key: $model.moveUp)
-            hotkeyRow("Move Down (Left Stick -Y)", key: $model.moveDown)
-            hotkeyRow("Move Left (Left Stick -X)", key: $model.moveLeft)
-            hotkeyRow("Move Right (Left Stick +X)", key: $model.moveRight)
-            hotkeyRow("Slow Walk / Sniper Precision", key: $model.walkModifier)
+            hotkeyRow("Move forward", key: $model.moveUp)
+            hotkeyRow("Move back", key: $model.moveDown)
+            hotkeyRow("Move left", key: $model.moveLeft)
+            hotkeyRow("Move right", key: $model.moveRight)
+            hotkeyRow("Walk, sniper precision", key: $model.walkModifier)
             Divider().overlay(Color.white.opacity(0.08))
-            hotkeyRow("Auto-Vehicle Enter/Exit (Smart)", key: $model.smartVehicle)
-            hotkeyRow("Hotwire Sweep Assist (◡)", key: $model.hotwireAssist)
-            hotkeyRow("360° Full Circle Assist (↻)", key: $model.circleAssist)
-            hotkeyRow("Sticky Right-Stick Hold", key: $model.rstickHold)
-            hotkeyRow("Rapid-Tap ✕ (QTE / Bike)", key: $model.rapidTap)
-            hotkeyRow("Cruise Control / Auto-Sprint", key: $model.cruiseToggle)
-            hotkeyRow("Live Sensitivity Down (−0.10)", key: $model.sensDown)
-            hotkeyRow("Live Sensitivity Up (+0.10)", key: $model.sensUp)
-            hotkeyRow("PS5 Mic Mute", key: $model.micMute)
+            hotkeyRow("Enter or exit vehicle, smart", key: $model.smartVehicle)
+            hotkeyRow("Hotwire sweep", key: $model.hotwireAssist)
+            hotkeyRow("Full circle", key: $model.circleAssist)
+            hotkeyRow("Hold the right stick", key: $model.rstickHold)
+            hotkeyRow("Rapid tap cross", key: $model.rapidTap)
+            hotkeyRow("Cruise control, auto sprint", key: $model.cruiseToggle)
+            hotkeyRow("Sensitivity down 0.10", key: $model.sensDown)
+            hotkeyRow("Sensitivity up 0.10", key: $model.sensUp)
+            hotkeyRow("PS5 microphone mute", key: $model.micMute)
         }
     }
 
     private func hotkeyRow(_ label: String, key: Binding<String>) -> some View {
         HStack {
             Text(label)
-                .font(.system(size: 12))
+                .font(Theme.small())
                 .foregroundStyle(.white.opacity(0.88))
             Spacer()
             KeyCaptureButton(keyName: key)

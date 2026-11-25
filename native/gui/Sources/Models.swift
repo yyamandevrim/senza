@@ -104,6 +104,33 @@ struct DoctorResponse: Decodable {
     let firewall: Firewall?
     let system_tunnel: SystemTunnel?
     let recommended_preset: Preset
+    struct NetworkProfile: Decodable {
+        struct Saved: Decodable {
+            let name: String?
+            let bypass: String?
+            let privileged: Bool?
+            let preset: String?
+        }
+        let id: String?
+        let name: String?
+        let router_ip: String?
+        let profile: Saved?
+    }
+    struct HistoryStats: Decodable {
+        let probes: Int
+        let sessions: Int
+        let play_minutes: Double
+        let rtt_median_ms: Double?
+        let rtt_p75_ms: Double?
+        let jitter_p75_ms: Double?
+        let loss_mean_pct: Double?
+    }
+    struct Helper: Decodable {
+        let ready: Bool
+    }
+    let network_profile: NetworkProfile?
+    let history: HistoryStats?
+    let helper: Helper?
     let sony_app: String?
     let sony_bundle_ready: Bool?
     let chiaki_app: String?
@@ -115,4 +142,39 @@ enum SessionPhase: Equatable {
     case launching(String)
     case playing(pid: Int32, label: String)
     case restoring(String)
+}
+
+
+/// One network's history from `senza history --json`.
+struct HistoryNetwork: Decodable {
+    struct Point: Decodable {
+        let ts: Double
+        let rtt_ms: Double?
+        let jitter_ms: Double?
+        let loss_pct: Double?
+    }
+    let network_id: String?
+    let name: String?
+    let current: Bool
+    let recent: [Point]
+}
+
+/// `senza onboard --json`
+struct OnboardResponse: Decodable {
+    struct Check: Decodable, Identifiable {
+        let id: String
+        let title: String
+        let ok: Bool
+        let required: Bool
+        let detail: String
+        let fix: String
+
+        /// CLI arguments when the fix is a runnable `senza ...` command without placeholders.
+        var runnableArgs: [String]? {
+            guard fix.hasPrefix("senza "), !fix.contains("<") else { return nil }
+            return fix.split(separator: " ").dropFirst().map(String.init)
+        }
+    }
+    let ready: Bool
+    let checks: [Check]
 }

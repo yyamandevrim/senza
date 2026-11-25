@@ -44,6 +44,11 @@ final class SenzaController: ObservableObject {
     @Published var showControlsSheet: Bool = false
     @Published var showStudioSheet: Bool = false
     @Published var errorMessage: String? = nil
+    @Published var recentRtt: [Double] = []
+    @Published var onboard: OnboardResponse? = nil
+    @Published var showOnboarding: Bool = false
+    @Published var onboardBusy: String? = nil
+    private var appliedNetworkId: String? = nil
 
     private var launcherProcess: Process? = nil
     private var childPid: Int32 = 0
@@ -194,8 +199,74 @@ final class SenzaController: ObservableObject {
             self.doctorLoading = false
             if result.ok, let decoded = try? JSONDecoder().decode(DoctorResponse.self, from: result.stdout) {
                 self.doctor = decoded
+                self.applyNetworkProfileIfNew(decoded.network_profile)
                 self.onDoctorUpdated?()
+                self.refreshHistory()
             }
+        }
+    }
+
+    var networkName: String? {
+        doctor?.network_profile?.name ?? doctor?.network_profile?.profile?.name
+    }
+
+    /// When Senza recognises a saved network, load its settings into the toggles (once per network change),
+    /// so what you see is what `start` will use.
+    private func applyNetworkProfileIfNew(_ net: DoctorResponse.NetworkProfile?) {
+        guard let net, let id = net.id, id != appliedNetworkId else { return }
+        appliedNetworkId = id
+        guard let saved = net.profile, saved.name != nil || saved.bypass != nil || saved.privileged != nil,
+              phase == .idle else { return }
+        if let b = saved.bypass, let mode = FirewallMode(rawValue: b) { firewall = mode }
+        if let p = saved.privileged { privileged = p }
+        if let pr = saved.preset, let opt = StreamPresetOption(rawValue: pr) { preset = opt }
+        statusNote = "Using settings saved for \(saved.name ?? "this network")"
+    }
+
+    func saveNetworkProfile(name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var args = ["network", "save", "--name", trimmed, "--bypass", firewall.rawValue,
+                    "--privileged", privileged ? "on" : "off"]
+        if client == .chiaki { args += ["--preset", preset.rawValue] }
+        Task { @MainActor [weak self] in
+            let result = await SenzaCLI.run(args)
+            guard let self else { return }
+            self.statusNote = result.ok ? "Saved settings for \(trimmed)" : result.summary(or: "Could not save network")
+            self.appliedNetworkId = nil
+            self.refreshDoctor()
+        }
+    }
+
+    func refreshHistory() {
+        Task { @MainActor [weak self] in
+            let result = await SenzaCLI.run(["history", "--json", "--points", "48"])
+            guard let self, result.ok,
+                  let nets = try? JSONDecoder().decode([HistoryNetwork].self, from: result.stdout),
+                  let current = nets.first(where: { $0.current }) else { return }
+            self.recentRtt = current.recent.compactMap { $0.rtt_ms }
+        }
+    }
+
+    func refreshOnboarding(presentIfNeeded: Bool = false) {
+        Task { @MainActor [weak self] in
+            let result = await SenzaCLI.run(["onboard", "--json"])
+            guard let self, let resp = try? JSONDecoder().decode(OnboardResponse.self, from: result.stdout) else { return }
+            self.onboard = resp
+            if presentIfNeeded && !resp.ready { self.showOnboarding = true }
+        }
+    }
+
+    func runOnboardingFix(_ check: OnboardResponse.Check) {
+        guard let args = check.runnableArgs, onboardBusy == nil else { return }
+        onboardBusy = check.id
+        Task { @MainActor [weak self] in
+            let result = await SenzaCLI.run(args)
+            guard let self else { return }
+            self.onboardBusy = nil
+            if !result.ok { self.statusNote = result.summary(or: "\(check.title) failed") }
+            self.refreshOnboarding()
+            self.refreshDoctor()
         }
     }
 
