@@ -6,12 +6,14 @@ import argparse
 import dataclasses
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 from . import __version__, history, networks, privileged
 from . import config as user_config
 from .app_bridge import (
+    LATENCY_FILE,
     PATCHED_APP,
     PATCHED_SONY_APP,
     STATE_DIR,
@@ -35,6 +37,7 @@ from .firewall import (
 )
 from .net_probe import probe_network
 from .profiles import export_runtime_config, load_profile
+from .state import read_json_dict
 from .stream_profile import (
     PRESETS,
     apply_stream_preset,
@@ -333,8 +336,16 @@ def cmd_start(args: argparse.Namespace) -> int:
         net = networks.current_network()
         input_mode = "hybrid" if start_hybrid else ("kbm" if use_kbm else "controller")
         session_id = history.start_session(net.id if net else None, client, input_mode, args.bypass_firewall)
+        LATENCY_FILE.unlink(missing_ok=True)
         exit_code = proc.wait()
-        history.end_session(session_id, exit_code)
+        latency = read_json_dict(LATENCY_FILE)
+        if latency.get("count"):
+            print(
+                f"  [latency] input -> controller report: p50 {latency['p50_ms']:.1f} ms, "
+                f"p95 {latency['p95_ms']:.1f} ms ({latency['total']} inputs)",
+                flush=True,
+            )
+        history.end_session(session_id, exit_code, latency)
         return exit_code
     finally:
         if bypass is not None:
@@ -572,6 +583,12 @@ def cmd_history(args: argparse.Namespace) -> int:
             f"{mark} {name:<18} {st.probes:>6} {_fmt(st.rtt_median_ms, ' ms'):>8} {_fmt(st.rtt_p75_ms, ' ms'):>8} "
             f"{_fmt(st.jitter_p75_ms, ' ms'):>10} {_fmt(st.loss_mean_pct, '%'):>6} {st.play_minutes:>5.0f} m"
         )
+    sessions = [x for x in history.recent_sessions(5) if x.get("latency_p50_ms") is not None]
+    if sessions:
+        print("\n  Input latency (key/trackpad -> virtual DualSense report), last sessions:")
+        for x in sessions:
+            when = time.strftime("%d %b %H:%M", time.localtime(x["started"]))
+            print(f"    {when}  {x['client']:<6} p50 {x['latency_p50_ms']:.1f} ms   p95 {x['latency_p95_ms']:.1f} ms")
     return 0
 
 

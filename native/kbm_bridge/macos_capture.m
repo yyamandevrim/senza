@@ -381,6 +381,11 @@ NSEvent *handle_local_nsevent(NSEvent *event) {
 
     pthread_mutex_unlock(&g_lock);
 
+    /* Input latency: event timestamp (same mach timebase as cap_now_ns) until the next controller report. */
+    if (consume && now_capture) {
+        sz_latency_mark_input((uint64_t)([event timestamp] * 1e9));
+    }
+
     /* handle_local_nsevent always runs on main thread */
     SzHudState st = hud_state(now_capture, now_mode, now_aiming, now_smart);
     if (!now_capture && hud_assist_visible()) {
@@ -573,6 +578,7 @@ bool psr_capture_start(PsrMapper *mapper) {
     if (atomic_load(&g_running)) return true;
     g_mapper = mapper;
     atomic_store(&g_running, true);
+    sz_latency_reset();
     atexit(cleanup_atexit);
 
     if ([NSThread isMainThread]) {
@@ -594,6 +600,14 @@ void psr_capture_stop(void) {
             atomic_store(&g_cursor_locked, false);
         }
         return;
+    }
+
+    SzLatencySummary lat;
+    if (sz_latency_summary(&lat)) {
+        fprintf(stderr, "[senza] input latency: n=%llu p50=%.1f ms p95=%.1f ms p99=%.1f ms max=%.1f ms\n",
+                (unsigned long long)lat.total, lat.p50_ms, lat.p95_ms, lat.p99_ms, lat.max_ms);
+        fflush(stderr);
+        sz_latency_write_json(getenv("SENZA_LATENCY_OUT"));
     }
 
     pthread_mutex_lock(&g_lock);
@@ -718,6 +732,7 @@ void psr_capture_sample_state(float dt_ms, PsrPadState *out_state) {
         psr_mapper_tick(g_mapper, dt_ms);
         *out_state = g_mapper->pad;
         cap_now = g_mapper->capture_active;
+        if (cap_now) sz_latency_report_built(cap_now_ns());
         mode_now = current_mode_id(g_mapper->vehicle_mode, g_mapper->aircraft_mode);
         smart_now = g_mapper->smart_mode;
         aiming_now = (cap_now && mode_now == 0 && g_mapper->pad.l2 > 0);

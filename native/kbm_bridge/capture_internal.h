@@ -20,6 +20,7 @@
 #include "macos_capture.h"
 #import "hud.h"
 #include "net_quality.h"
+#include "input_latency.h"
 
 #include <ctype.h>
 #include <ifaddrs.h>

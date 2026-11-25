@@ -1,11 +1,13 @@
 #include "config_loader.h"
 #include "mapper_core.h"
 #include "net_quality.h"
+#include "input_latency.h"
 
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 static void test_wasd_diagonal_normalization(void) {
@@ -500,7 +502,40 @@ static void test_quality_watch_degrade_cooldown_recover(void) {
     assert(!sz_quality_is_bad(70.0, 10.0, 1.5, true) && !sz_quality_is_good(70.0, 10.0, 1.5, true));
 }
 
+static void test_input_latency_percentiles_and_pairing(void) {
+    sz_latency_reset();
+    SzLatencySummary s;
+    assert(!sz_latency_summary(&s));
+    for (int i = 1; i <= 100; i++) sz_latency_add_ms((float)i); /* 1..100 ms */
+    sz_latency_add_ms(NAN);
+    sz_latency_add_ms(-3.0f);
+    sz_latency_add_ms(5000.0f); /* stalls are dropped */
+    assert(sz_latency_summary(&s));
+    assert(s.count == 100 && s.total == 100);
+    assert(fabsf(s.p50_ms - 50.0f) <= 1.0f && fabsf(s.p95_ms - 95.0f) <= 1.0f && s.max_ms == 100.0f);
+
+    /* earliest pending event wins; a report closes it once */
+    sz_latency_reset();
+    sz_latency_mark_input(1000000000ULL);
+    sz_latency_mark_input(1004000000ULL);
+    sz_latency_report_built(1006000000ULL); /* 6 ms after the first event */
+    sz_latency_report_built(1010000000ULL); /* nothing pending: no sample */
+    assert(sz_latency_summary(&s) && s.count == 1 && fabsf(s.p50_ms - 6.0f) < 0.01f);
+
+    char path[] = "/tmp/senza_lat_XXXXXX";
+    int fd = mkstemp(path);
+    close(fd);
+    assert(sz_latency_write_json(path));
+    FILE *fp = fopen(path, "r");
+    char buf[256] = {0};
+    fread(buf, 1, sizeof(buf) - 1, fp);
+    fclose(fp);
+    unlink(path);
+    assert(strstr(buf, "\"p50_ms\": 6.00") != NULL);
+}
+
 int main(void) {
+    test_input_latency_percentiles_and_pairing();
     test_quality_watch_degrade_cooldown_recover();
     test_config_sanitize_rejects_nonfinite_and_out_of_range();
     test_nonfinite_inputs_never_reach_pad();

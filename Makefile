@@ -15,7 +15,7 @@ SONY_FRAMEWORKS := $(FRAMEWORKS) -framework IOKit
 OBJ_DIR := $(BUILD_DIR)/obj
 
 # Shared by both bridges: mapper + config + Cocoa capture / HUD modules (compiled once).
-COMMON_C := mapper_core.c config_loader.c net_quality.c
+COMMON_C := mapper_core.c config_loader.c net_quality.c input_latency.c
 COMMON_M := macos_capture.m hud.m net_telemetry.m phys_controller.m window_watch.m
 COMMON_OBJS := $(addprefix $(OBJ_DIR)/,$(COMMON_C:.c=.o) $(COMMON_M:.m=.o))
 NATIVE_HEADERS := $(wildcard $(NATIVE_DIR)/*.h)
@@ -63,9 +63,9 @@ uninstall:
 	rm -f "$(BIN_DIR)/senza"
 	@echo "Removed $(BIN_DIR)/senza"
 
-$(TEST_BIN): $(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c $(NATIVE_DIR)/net_quality.c tests/test_mapper_core.c
+$(TEST_BIN): $(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c $(NATIVE_DIR)/net_quality.c $(NATIVE_DIR)/input_latency.c tests/test_mapper_core.c
 	mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c $(NATIVE_DIR)/net_quality.c tests/test_mapper_core.c -o $(TEST_BIN) -lm
+	$(CC) $(CFLAGS) $(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c $(NATIVE_DIR)/net_quality.c $(NATIVE_DIR)/input_latency.c tests/test_mapper_core.c -o $(TEST_BIN) -lm
 
 test-c: $(TEST_BIN)
 	./$(TEST_BIN)
@@ -77,7 +77,7 @@ FUZZ_ITERS ?= 300
 test-sanitize:
 	mkdir -p $(BUILD_DIR)
 	$(CC) -O1 -g -std=c11 -Wall -Wextra -I$(NATIVE_DIR) -fsanitize=$(SANITIZE) -fno-sanitize-recover=all \
-		$(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c $(NATIVE_DIR)/net_quality.c tests/test_mapper_core.c -o $(BUILD_DIR)/test_mapper_core_san -lm
+		$(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c $(NATIVE_DIR)/net_quality.c $(NATIVE_DIR)/input_latency.c tests/test_mapper_core.c -o $(BUILD_DIR)/test_mapper_core_san -lm
 	$(CC) -O1 -g -std=c11 -Wall -Wextra -I$(NATIVE_DIR) -fsanitize=$(SANITIZE) -fno-sanitize-recover=all \
 		$(NATIVE_DIR)/mapper_core.c $(NATIVE_DIR)/config_loader.c tests/test_native_fuzz.c -o $(BUILD_DIR)/test_native_fuzz_san -lm
 	./$(BUILD_DIR)/test_mapper_core_san

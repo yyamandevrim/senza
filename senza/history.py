@@ -34,9 +34,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     client TEXT,
     input_mode TEXT,
     bypass TEXT,
-    exit_code INTEGER
+    exit_code INTEGER,
+    latency_p50_ms REAL,
+    latency_p95_ms REAL
 );
 """
+MIGRATIONS = (
+    "ALTER TABLE sessions ADD COLUMN latency_p50_ms REAL",
+    "ALTER TABLE sessions ADD COLUMN latency_p95_ms REAL",
+)
 
 
 @contextmanager
@@ -46,6 +52,10 @@ def _db(path: Path | None = None) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(str(p), timeout=2.0)
     try:
         conn.executescript(SCHEMA)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+        for stmt in MIGRATIONS:
+            if stmt.split()[5] not in cols:
+                conn.execute(stmt)
         yield conn
         conn.commit()
     finally:
@@ -89,14 +99,41 @@ def start_session(
         return None
 
 
-def end_session(session_id: int | None, exit_code: int, path: Path | None = None) -> None:
+def end_session(
+    session_id: int | None, exit_code: int, latency: dict[str, Any] | None = None, path: Path | None = None
+) -> None:
     if not session_id:
         return
+    lat = latency or {}
     try:
         with _db(path) as conn:
-            conn.execute("UPDATE sessions SET ended=?, exit_code=? WHERE rowid=?", (time.time(), exit_code, session_id))
+            conn.execute(
+                "UPDATE sessions SET ended=?, exit_code=?, latency_p50_ms=?, latency_p95_ms=? WHERE rowid=?",
+                (time.time(), exit_code, lat.get("p50_ms"), lat.get("p95_ms"), session_id),
+            )
     except sqlite3.Error:
         pass
+
+
+def recent_sessions(limit: int = 10, path: Path | None = None) -> list[dict[str, Any]]:
+    with _db(path) as conn:
+        rows = conn.execute(
+            "SELECT started, ended, network_id, client, input_mode, bypass, exit_code, latency_p50_ms, latency_p95_ms "
+            "FROM sessions ORDER BY started DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    keys = (
+        "started",
+        "ended",
+        "network_id",
+        "client",
+        "input_mode",
+        "bypass",
+        "exit_code",
+        "latency_p50_ms",
+        "latency_p95_ms",
+    )
+    return [dict(zip(keys, r, strict=True)) for r in rows]
 
 
 def _p(values: list[float], q: float) -> float | None:

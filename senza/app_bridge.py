@@ -24,6 +24,7 @@ CHIAKI_STAMP_FILE = STATE_DIR / "chiaki-ng-source.stamp"
 PATCHED_SONY_APP = STATE_DIR / "RemotePlay-patched.app"
 SONY_STAMP_FILE = STATE_DIR / "remoteplay-source.stamp"
 CACHED_ICNS_PATH = STATE_DIR / "Senza.icns"
+LATENCY_FILE = STATE_DIR / "last_session_latency.json"  # written by the native bridge at exit
 
 CHIAKI_SEARCH_PATHS = (
     Path("/Applications/chiaki-ng.app"),
@@ -201,6 +202,7 @@ def build_launch_env(
     existing_dyld = env.get("DYLD_INSERT_LIBRARIES", "")
     env["DYLD_INSERT_LIBRARIES"] = f"{dylib_path}:{existing_dyld}" if existing_dyld else str(dylib_path)
     env["SENZA_PROFILE_CFG"] = str(runtime_cfg_path)
+    env["SENZA_LATENCY_OUT"] = str(LATENCY_FILE)
     if profile_json_path is not None:
         env["SENZA_PROFILE_JSON"] = str(profile_json_path)
     if ping_host:
