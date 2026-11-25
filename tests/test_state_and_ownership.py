@@ -291,7 +291,7 @@ class TestUserConfig(unittest.TestCase):
         from senza.firewall_bypass import install_tunnel_launch_agent
 
         plist = Path(self._tmp.name) / "agent.plist"
-        with mock.patch("senza.firewall_bypass.TUNNEL_WATCHDOG_LOG", Path(self._tmp.name) / "log"):
+        with mock.patch("senza.firewall.launchd.TUNNEL_WATCHDOG_LOG", Path(self._tmp.name) / "log"):
             install_tunnel_launch_agent(runner=_ok, plist_path=plist, cli_path="/x/senza")
         args = plistlib.loads(plist.read_bytes())["ProgramArguments"]
         self.assertEqual(args, ["/x/senza", "tunnel", "ensure"])
@@ -304,7 +304,7 @@ class TestUserConfig(unittest.TestCase):
                 return _ok(cmd, json.dumps({"BackendState": "Running", "Peer": {}}))
             return _ok(cmd)
 
-        with mock.patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=["/ts"]):
+        with mock.patch("senza.firewall.tailscale._tailscale_cli_candidates", return_value=["/ts"]):
             fb = FirewallBypass(mode="tailscale", runner=runner, state_file=Path(self._tmp.name) / "s.json")
             notes = fb.enter()
         self.assertTrue(any("No Tailscale exit node configured" in n for n in notes))

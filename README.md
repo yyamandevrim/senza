@@ -47,7 +47,9 @@ Engineered specifically for playing **GTA 6** smoothly on a MacBook over WAN or 
 Senza.app (native SwiftUI launcher + Menu Bar sandwich)  ──or──  senza CLI / Raycast
   ├── senza/profiles.py        → exports runtime config + live-save JSON hook
   ├── senza/sys_optimizer.py   → caffeinate + App Nap off + optional awdl0/llw0 watchdog & UDP sysctl
-  ├── senza/firewall_bypass.py → optional Clean DNS / WARP / Tailscale / VPN with rollback
+  ├── senza/firewall/          → probes · tailscale · warp · netsvc · bypass (per-session) · system_tunnel · launchd
+  ├── senza/privileged.py      → senza-priv helper (passwordless) or one-off sudo / Touch ID fallback
+  ├── senza/config.py          → ~/.config/senza/config.json (exit node, network profiles)
   └── senza/app_bridge.py      → ad-hoc signed RemotePlay.app / chiaki-ng.app + cooperative frontmost activation
         └── DYLD_INSERT_LIBRARIES=libsenza_sony.dylib (or libsenza_chiaki.dylib)
               ├── macos_capture.m       (zero-permission Cocoa NSEvent monitor + HUD + Ping pill + Haptics)

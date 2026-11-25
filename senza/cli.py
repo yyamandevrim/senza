@@ -22,7 +22,7 @@ from .app_bridge import (
 )
 from . import config as user_config
 from . import privileged
-from .firewall_bypass import (
+from .firewall import (
     FirewallBypass,
     install_tunnel_launch_agent,
     probe_psn_firewall,

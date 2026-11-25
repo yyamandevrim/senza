@@ -231,10 +231,10 @@ class TestSenza(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state_file = Path(tmp) / "bypass_state.json"
             with (
-                patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=[ts_bin]),
-                patch("senza.firewall_bypass.probe_tailscale_controlplane", return_value=(True, "ok")),
-                patch("senza.firewall_bypass.probe_egress_via_tunnel", return_value=(True, "egress IP 203.0.113.5")),
-                patch("senza.firewall_bypass.time.sleep", return_value=None),
+                patch("senza.firewall.tailscale._tailscale_cli_candidates", return_value=[ts_bin]),
+                patch("senza.firewall.probes.probe_tailscale_controlplane", return_value=(True, "ok")),
+                patch("senza.firewall.probes.probe_egress_via_tunnel", return_value=(True, "egress IP 203.0.113.5")),
+                patch("time.sleep", return_value=None),
             ):
                 fb = FirewallBypass(mode="tailscale", dry_run=False, runner=fake_runner, state_file=state_file)
                 enter_notes = fb.enter()
@@ -278,8 +278,8 @@ class TestSenza(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state_file = Path(tmp) / "bypass_state.json"
             with (
-                patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=[ts_bin]),
-                patch("senza.firewall_bypass.time.sleep", return_value=None),
+                patch("senza.firewall.tailscale._tailscale_cli_candidates", return_value=[ts_bin]),
+                patch("time.sleep", return_value=None),
             ):
                 fb = FirewallBypass(mode="tailscale", dry_run=False, runner=fake_runner, state_file=state_file)
                 notes = fb.enter()
@@ -319,7 +319,7 @@ class TestSenza(unittest.TestCase):
                 )
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
-        with patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=[dead_cli, live_cli]):
+        with patch("senza.firewall.tailscale._tailscale_cli_candidates", return_value=[dead_cli, live_cli]):
             self.assertEqual(find_tailscale_cli(fake_runner), live_cli)
 
         info = inspect_tailscale_exit_node(live_cli, target="100.101.102.103", runner=fake_runner)
@@ -401,12 +401,12 @@ class TestSenza(unittest.TestCase):
             plist_file = Path(tmp) / "com.senza.fortigate-tailscale.plist"
 
             with (
-                patch("senza.firewall_bypass._tailscale_cli_candidates", return_value=[ts_bin]),
-                patch("senza.firewall_bypass.find_warp_cli", return_value=warp_bin),
+                patch("senza.firewall.tailscale._tailscale_cli_candidates", return_value=[ts_bin]),
+                patch("senza.firewall.warp.find_warp_cli", return_value=warp_bin),
                 # Simulate FortiGate blocking controlplane.tailscale.com
-                patch("senza.firewall_bypass.probe_tailscale_controlplane", return_value=(False, "blocked")),
-                patch("senza.firewall_bypass.probe_egress_via_tunnel", return_value=(True, "egress IP 198.51.100.7 (TR)")),
-                patch("senza.firewall_bypass.time.sleep", return_value=None),
+                patch("senza.firewall.probes.probe_tailscale_controlplane", return_value=(False, "blocked")),
+                patch("senza.firewall.probes.probe_egress_via_tunnel", return_value=(True, "egress IP 198.51.100.7 (TR)")),
+                patch("time.sleep", return_value=None),
             ):
                 up_notes = system_tunnel_up(
                     exit_node="100.101.102.103",
